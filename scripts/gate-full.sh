@@ -45,8 +45,8 @@ if [[ -n "$fixture_dir" ]]; then
         exit 1
     fi
 
-    printf '%s\n' '==> cargo test -p atlantis-engine --locked replay'
-    cargo test -p atlantis-engine --locked replay
+    printf '%s\n' '==> cargo test -p atlantis-engine --locked replay -- --include-ignored'
+    cargo test -p atlantis-engine --locked replay -- --include-ignored
 else
     printf '%s\n' 'No recorded fixtures found; skipping fixture replay tests'
 fi
