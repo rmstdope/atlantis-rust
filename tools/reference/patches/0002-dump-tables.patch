@@ -1,0 +1,725 @@
+--- a/main.cpp
++++ b/main.cpp
+@@ -31,7 +31,707 @@
+ #include "items.h"
+ #include "skills.h"
+ #include "gamedata.h"
++#include "aregion.h"
++
++#include <cstddef>
++#include <iostream>
++#include <sstream>
++#include <string>
++
++namespace {
++
++void writeJsonString(std::ostream &out, const char *value)
++{
++	if (!value) {
++		out << "null";
++		return;
++	}
++
++	static const char hex[] = "0123456789abcdef";
++	out.put('"');
++	for (const unsigned char *p =
++				reinterpret_cast<const unsigned char *>(value); *p; ++p) {
++		switch (*p) {
++			case '"': out << "\\\""; break;
++			case '\\': out << "\\\\"; break;
++			case '\b': out << "\\b"; break;
++			case '\f': out << "\\f"; break;
++			case '\n': out << "\\n"; break;
++			case '\r': out << "\\r"; break;
++			case '\t': out << "\\t"; break;
++			default:
++				if (*p < 0x20) {
++					out << "\\u00" << hex[*p >> 4] << hex[*p & 0x0f];
++				} else {
++					out.put(static_cast<char>(*p));
++				}
++				break;
++		}
++	}
++	out.put('"');
++}
++
++class JsonRecord {
++	public:
++		explicit JsonRecord(const char *table, int index = -1)
++		{
++			out << "{\"table\":";
++			writeJsonString(out, table);
++			if (index >= 0) out << ",\"index\":" << index;
++		}
++
++		void text(const char *key, const char *value)
++		{
++			field(key);
++			writeJsonString(out, value);
++		}
++
++		void number(const char *key, long long value)
++		{
++			field(key);
++			out << value;
++		}
++
++		void raw(const char *key, const std::string &value)
++		{
++			field(key);
++			out << value;
++		}
++
++		template <typename Callback>
++		void array(const char *key, std::size_t count, Callback write_value)
++		{
++			field(key);
++			out.put('[');
++			for (std::size_t i = 0; i < count; ++i) {
++				if (i) out.put(',');
++				write_value(out, i);
++			}
++			out.put(']');
++		}
++
++		void finish()
++		{
++			out << "}\n";
++			std::cout << out.str();
++		}
++
++	private:
++		void field(const char *key)
++		{
++			out.put(',');
++			writeJsonString(out, key);
++			out.put(':');
++		}
++
++		std::ostringstream out;
++};
++
++void dumpCount(const char *name, long long count)
++{
++	JsonRecord row("counts");
++	row.text("name", name);
++	row.number("value", count);
++	row.finish();
++}
++
++void dumpGlobal(const char *name, const char *value)
++{
++	JsonRecord row("globals");
++	row.text("name", name);
++	row.text("value", value);
++	row.finish();
++}
++
++void dumpGlobal(const char *name, long long value)
++{
++	JsonRecord row("globals");
++	row.text("name", name);
++	row.number("value", value);
++	row.finish();
++}
++
++void dumpGlobals()
++{
++#define DUMP_GAMEDEF(name) dumpGlobal(#name, Globals->name)
++	DUMP_GAMEDEF(RULESET_NAME);
++	DUMP_GAMEDEF(RULESET_VERSION);
++	DUMP_GAMEDEF(MAX_SPEED);
++	DUMP_GAMEDEF(PHASED_MOVE_OFFSET);
++	DUMP_GAMEDEF(FLEET_WIND_BOOST);
++	DUMP_GAMEDEF(FLEET_CREW_BOOST);
++	DUMP_GAMEDEF(FLEET_LOAD_BOOST);
++	DUMP_GAMEDEF(STUDENTS_PER_TEACHER);
++	DUMP_GAMEDEF(MAINTENANCE_COST);
++	DUMP_GAMEDEF(LEADER_COST);
++	DUMP_GAMEDEF(MAINTENANCE_MULTIPLIER);
++	DUMP_GAMEDEF(MULTIPLIER_USE);
++	DUMP_GAMEDEF(STARVE_PERCENT);
++	DUMP_GAMEDEF(SKILL_STARVATION);
++	DUMP_GAMEDEF(START_MONEY);
++	DUMP_GAMEDEF(WORK_FRACTION);
++	DUMP_GAMEDEF(ENTERTAIN_FRACTION);
++	DUMP_GAMEDEF(ENTERTAIN_INCOME);
++	DUMP_GAMEDEF(TAX_BASE_INCOME);
++	DUMP_GAMEDEF(TAX_BONUS_WEAPON);
++	DUMP_GAMEDEF(TAX_BONUS_ARMOR);
++	DUMP_GAMEDEF(TAX_BONUS_FORT);
++	DUMP_GAMEDEF(WHO_CAN_TAX);
++	DUMP_GAMEDEF(TAX_PILLAGE_MONTH_LONG);
++	DUMP_GAMEDEF(HEALS_PER_MAN);
++	DUMP_GAMEDEF(GUARD_REGEN);
++	DUMP_GAMEDEF(CITY_GUARD);
++	DUMP_GAMEDEF(GUARD_MONEY);
++	DUMP_GAMEDEF(CITY_POP);
++	DUMP_GAMEDEF(WMON_FREQUENCY);
++	DUMP_GAMEDEF(LAIR_FREQUENCY);
++	DUMP_GAMEDEF(FACTION_POINTS);
++	DUMP_GAMEDEF(TIMES_REWARD);
++	DUMP_GAMEDEF(TOWNS_EXIST);
++	DUMP_GAMEDEF(LEADERS_EXIST);
++	DUMP_GAMEDEF(SKILL_LIMIT_NONLEADERS);
++	DUMP_GAMEDEF(MAGE_NONLEADERS);
++	DUMP_GAMEDEF(RACES_EXIST);
++	DUMP_GAMEDEF(GATES_EXIST);
++	DUMP_GAMEDEF(FOOD_ITEMS_EXIST);
++	DUMP_GAMEDEF(COASTAL_FISH);
++	DUMP_GAMEDEF(CITY_MONSTERS_EXIST);
++	DUMP_GAMEDEF(WANDERING_MONSTERS_EXIST);
++	DUMP_GAMEDEF(LAIR_MONSTERS_EXIST);
++	DUMP_GAMEDEF(WEATHER_EXISTS);
++	DUMP_GAMEDEF(OPEN_ENDED);
++	DUMP_GAMEDEF(NEXUS_EXISTS);
++	DUMP_GAMEDEF(CONQUEST_GAME);
++	DUMP_GAMEDEF(RANDOM_ECONOMY);
++	DUMP_GAMEDEF(VARIABLE_ECONOMY);
++	DUMP_GAMEDEF(CITY_MARKET_NORMAL_AMT);
++	DUMP_GAMEDEF(CITY_MARKET_ADVANCED_AMT);
++	DUMP_GAMEDEF(CITY_MARKET_TRADE_AMT);
++	DUMP_GAMEDEF(CITY_MARKET_MAGIC_AMT);
++	DUMP_GAMEDEF(MORE_PROFITABLE_TRADE_GOODS);
++	DUMP_GAMEDEF(BASE_MAN_COST);
++	DUMP_GAMEDEF(LASTORDERS_MAINTAINED_BY_SCRIPTS);
++	DUMP_GAMEDEF(MAX_INACTIVE_TURNS);
++	DUMP_GAMEDEF(EASIER_UNDERWORLD);
++	DUMP_GAMEDEF(DEFAULT_WORK_ORDER);
++	DUMP_GAMEDEF(FACTION_LIMIT_TYPE);
++	DUMP_GAMEDEF(FLIGHT_OVER_WATER);
++	DUMP_GAMEDEF(START_CITIES_EXIST);
++	DUMP_GAMEDEF(SAFE_START_CITIES);
++	DUMP_GAMEDEF(AMT_START_CITY_GUARDS);
++	DUMP_GAMEDEF(START_CITY_GUARDS_PLATE);
++	DUMP_GAMEDEF(START_CITY_MAGES);
++	DUMP_GAMEDEF(START_CITY_TACTICS);
++	DUMP_GAMEDEF(APPRENTICES_EXIST);
++	DUMP_GAMEDEF(APPRENTICE_NAME);
++	DUMP_GAMEDEF(WORLD_NAME);
++	DUMP_GAMEDEF(NEXUS_GATE_OUT);
++	DUMP_GAMEDEF(NEXUS_IS_CITY);
++	DUMP_GAMEDEF(BATTLE_FACTION_INFO);
++	DUMP_GAMEDEF(ALLOW_WITHDRAW);
++	DUMP_GAMEDEF(CITY_RENAME_COST);
++	DUMP_GAMEDEF(MULTI_HEX_NEXUS);
++	DUMP_GAMEDEF(ICOSAHEDRAL_WORLD);
++	DUMP_GAMEDEF(UNDERWORLD_LEVELS);
++	DUMP_GAMEDEF(UNDERDEEP_LEVELS);
++	DUMP_GAMEDEF(ABYSS_LEVEL);
++	DUMP_GAMEDEF(TOWN_PROBABILITY);
++	DUMP_GAMEDEF(TOWN_SPREAD);
++	DUMP_GAMEDEF(TOWNS_NOT_ADJACENT);
++	DUMP_GAMEDEF(LESS_ARCTIC_TOWNS);
++	DUMP_GAMEDEF(OCEAN);
++	DUMP_GAMEDEF(CONTINENT_SIZE);
++	DUMP_GAMEDEF(TERRAIN_GRANULARITY);
++	DUMP_GAMEDEF(LAKES);
++	DUMP_GAMEDEF(ARCHIPELAGO);
++	DUMP_GAMEDEF(SEVER_LAND_BRIDGES);
++	DUMP_GAMEDEF(SEA_LIMIT);
++	DUMP_GAMEDEF(LAKE_WAGE_EFFECT);
++	DUMP_GAMEDEF(LAKESIDE_IS_COASTAL);
++	DUMP_GAMEDEF(ODD_TERRAIN);
++	DUMP_GAMEDEF(IMPROVED_FARSIGHT);
++	DUMP_GAMEDEF(GM_REPORT);
++	DUMP_GAMEDEF(DECAY);
++	DUMP_GAMEDEF(LIMITED_MAGES_PER_BUILDING);
++	DUMP_GAMEDEF(TRANSIT_REPORT);
++	DUMP_GAMEDEF(MARKETS_SHOW_ADVANCED_ITEMS);
++	DUMP_GAMEDEF(USE_PREPARE_COMMAND);
++	DUMP_GAMEDEF(MONSTER_ADVANCE_MIN_PERCENT);
++	DUMP_GAMEDEF(MONSTER_ADVANCE_HOSTILE_PERCENT);
++	DUMP_GAMEDEF(HAVE_EMAIL_SPECIAL_COMMANDS);
++	DUMP_GAMEDEF(START_CITIES_START_UNLIMITED);
++	DUMP_GAMEDEF(PROPORTIONAL_AMTS_USAGE);
++	DUMP_GAMEDEF(USE_WEAPON_ARMOR_COMMAND);
++	DUMP_GAMEDEF(MONSTER_NO_SPOILS);
++	DUMP_GAMEDEF(MONSTER_SPOILS_RECOVERY);
++	DUMP_GAMEDEF(MAX_ASSASSIN_FREE_ATTACKS);
++	DUMP_GAMEDEF(RELEASE_MONSTERS);
++	DUMP_GAMEDEF(CHECK_MONSTER_CONTROL_MID_TURN);
++	DUMP_GAMEDEF(DETECT_GATE_NUMBERS);
++	DUMP_GAMEDEF(ARMY_ROUT);
++	DUMP_GAMEDEF(ONLY_ROUT_ONCE);
++	DUMP_GAMEDEF(ADVANCED_FORTS);
++	DUMP_GAMEDEF(FULL_TRUESEEING_BONUS);
++	DUMP_GAMEDEF(IMPROVED_AMTS);
++	DUMP_GAMEDEF(FULL_INVIS_ON_SELF);
++	DUMP_GAMEDEF(MONSTER_BATTLE_REGEN);
++	DUMP_GAMEDEF(SKILL_PRACTICE_AMOUNT);
++	DUMP_GAMEDEF(REQUIRED_EXPERIENCE);
++	DUMP_GAMEDEF(UPKEEP_MINIMUM_FOOD);
++	DUMP_GAMEDEF(UPKEEP_MAXIMUM_FOOD);
++	DUMP_GAMEDEF(UPKEEP_FOOD_VALUE);
++	DUMP_GAMEDEF(PREVENT_SAIL_THROUGH);
++	DUMP_GAMEDEF(ALLOW_TRIVIAL_PORTAGE);
++	DUMP_GAMEDEF(GATES_NOT_PERENNIAL);
++	DUMP_GAMEDEF(START_GATES_OPEN);
++	DUMP_GAMEDEF(SHOW_CLOSED_GATES);
++	DUMP_GAMEDEF(TRANSPORT);
++	DUMP_GAMEDEF(LOCAL_TRANSPORT);
++	DUMP_GAMEDEF(NONLOCAL_TRANSPORT);
++	DUMP_GAMEDEF(SHIPPING_COST);
++	DUMP_GAMEDEF(FRACTIONAL_WEIGHT);
++	DUMP_GAMEDEF(GROW_RACES);
++	DUMP_GAMEDEF(DYNAMIC_POPULATION);
++	DUMP_GAMEDEF(POP_GROWTH);
++	DUMP_GAMEDEF(DELAY_MORTALITY);
++	DUMP_GAMEDEF(DELAY_GROWTH);
++	DUMP_GAMEDEF(TOWN_DEVELOPMENT);
++	DUMP_GAMEDEF(TACTICS_NEEDS_WAR);
++	DUMP_GAMEDEF(ALLIES_NOAID);
++	DUMP_GAMEDEF(HARDER_ASSASSINATION);
++	DUMP_GAMEDEF(DISPERSE_GATE_NUMBERS);
++	DUMP_GAMEDEF(UNDEATH_CONTAGION);
++	DUMP_GAMEDEF(REGIONS_ECONOMY);
++	DUMP_GAMEDEF(ADVANCED_TACTICS);
++	DUMP_GAMEDEF(OVERWHELMING);
++	DUMP_GAMEDEF(STRICT_GUARD);
++	DUMP_GAMEDEF(OCEAN_GUARD);
++	DUMP_GAMEDEF(BATTLE_LOG_LEVEL);
++	DUMP_GAMEDEF(EXTENDED_FORT_DEFENCE);
++	DUMP_GAMEDEF(SPOILS_NO_TRADE);
++	DUMP_GAMEDEF(WORLD_EVENTS);
++	DUMP_GAMEDEF(FACTION_STATISTICS);
++	DUMP_GAMEDEF(BUILD_NO_TRADE);
++	DUMP_GAMEDEF(TRANSPORT_NO_TRADE);
++	DUMP_GAMEDEF(FACTION_ACTIVITY);
++	DUMP_GAMEDEF(DESTROY_BEHAVIOR);
++	DUMP_GAMEDEF(MIN_DESTROY_POINTS);
++	DUMP_GAMEDEF(MAX_DESTROY_PERCENT);
++	DUMP_GAMEDEF(HALF_RIDING_BONUS);
++#undef DUMP_GAMEDEF
++}
++
++void dumpItems()
++{
++	dumpCount("items", NITEMS);
++	for (int i = 0; i < NITEMS; ++i) {
++		const ItemType &v = ItemDefs[i];
++		JsonRecord row("items", i);
++		row.text("name", v.name);
++		row.text("plural", v.names);
++		row.text("abbreviation", v.abr);
++		row.number("flags", v.flags);
++		row.text("production_skill", v.pSkill);
++		row.number("production_level", v.pLevel);
++		row.number("production_months", v.pMonths);
++		row.number("production_output", v.pOut);
++		row.array("production_inputs", 4, [&](std::ostream &out, std::size_t j) {
++			out << "{\"item\":" << v.pInput[j].item
++					<< ",\"amount\":" << v.pInput[j].amt << '}';
++		});
++		row.text("magic_skill", v.mSkill);
++		row.number("magic_level", v.mLevel);
++		row.number("magic_output", v.mOut);
++		row.array("magic_inputs", 4, [&](std::ostream &out, std::size_t j) {
++			out << "{\"item\":" << v.mInput[j].item
++					<< ",\"amount\":" << v.mInput[j].amt << '}';
++		});
++		row.number("weight", v.weight);
++		row.number("type", v.type);
++		row.number("base_price", v.baseprice);
++		row.number("combat", v.combat);
++		row.number("walk", v.walk);
++		row.number("ride", v.ride);
++		row.number("fly", v.fly);
++		row.number("swim", v.swim);
++		row.number("speed", v.speed);
++		row.number("hitch_item", v.hitchItem);
++		row.number("hitch_walk", v.hitchwalk);
++		row.number("mult_item", v.mult_item);
++		row.number("mult_value", v.mult_val);
++		row.number("max_inventory", v.max_inventory);
++		row.number("escape", v.escape);
++		row.text("escape_skill", v.esc_skill);
++		row.number("escape_value", v.esc_val);
++		row.text("grant_skill", v.grantSkill);
++		row.array("grant_from", 4, [&](std::ostream &out, std::size_t j) {
++			writeJsonString(out, v.fromSkills[j]);
++		});
++		row.number("min_grant", v.minGrant);
++		row.number("max_grant", v.maxGrant);
++		row.finish();
++	}
++}
++
++void dumpRaces()
++{
++	dumpCount("races", NUMMAN);
++	for (int i = 0; i < NUMMAN; ++i) {
++		const ManType &v = ManDefs[i];
++		JsonRecord row("races", i);
++		row.text("abbreviation", v.abbr);
++		row.number("terrain", v.terrain);
++		row.number("special_level", v.speciallevel);
++		row.number("default_level", v.defaultlevel);
++		row.array("skills", 6, [&](std::ostream &out, std::size_t j) {
++			writeJsonString(out, v.skills[j]);
++		});
++		row.number("ethnicity", v.ethnicity);
++		row.finish();
++	}
++}
+ 
++void dumpMonsters()
++{
++	dumpCount("monsters", NUMMONSTERS);
++	for (int i = 0; i < NUMMONSTERS; ++i) {
++		const MonType &v = MonDefs[i];
++		JsonRecord row("monsters", i);
++		row.number("attack_level", v.attackLevel);
++		row.array("defense", NUM_ATTACK_TYPES, [&](std::ostream &out, std::size_t j) {
++			out << v.defense[j];
++		});
++		row.number("number_of_attacks", v.numAttacks);
++		row.number("hits", v.hits);
++		row.number("regeneration", v.regen);
++		row.number("tactics", v.tactics);
++		row.number("stealth", v.stealth);
++		row.number("observation", v.obs);
++		row.text("special", v.special);
++		row.number("special_level", v.specialLevel);
++		row.number("silver", v.silver);
++		row.number("spoil_type", v.spoiltype);
++		row.number("hostile", v.hostile);
++		row.number("number", v.number);
++		row.text("name", v.name);
++		row.text("abbreviation", v.abbr);
++		row.number("hit_damage", v.hitDamage);
++		row.array("preferred_terrain", v.preferredTerrain.size(),
++				[&](std::ostream &out, std::size_t j) {
++			out << v.preferredTerrain[j];
++		});
++		row.array("forbidden_terrain", v.forbiddenTerrain.size(),
++				[&](std::ostream &out, std::size_t j) {
++			out << v.forbiddenTerrain[j];
++		});
++		row.finish();
++	}
++}
++
++void dumpWeapons()
++{
++	dumpCount("weapons", NUMWEAPONS);
++	for (int i = 0; i < NUMWEAPONS; ++i) {
++		const WeaponType &v = WeaponDefs[i];
++		JsonRecord row("weapons", i);
++		row.text("abbreviation", v.abbr);
++		row.number("flags", v.flags);
++		row.text("base_skill", v.baseSkill);
++		row.text("or_skill", v.orSkill);
++		row.number("weapon_class", v.weapClass);
++		row.number("attack_type", v.attackType);
++		row.number("number_of_attacks", v.numAttacks);
++		row.number("attack_bonus", v.attackBonus);
++		row.number("defense_bonus", v.defenseBonus);
++		row.number("mount_bonus", v.mountBonus);
++		row.number("hit_damage", v.hitDamage);
++		row.array("bonus_malus", MAX_WEAPON_BM_TARGETS,
++				[&](std::ostream &out, std::size_t j) {
++			out << "{\"weapon\":";
++			writeJsonString(out, v.bonusMalus[j].weaponAbbr);
++			out << ",\"attack_modifier\":" << v.bonusMalus[j].attackModifer
++					<< ",\"defense_modifier\":"
++					<< v.bonusMalus[j].defenseModifer << '}';
++		});
++		row.finish();
++	}
++}
++
++void dumpArmor()
++{
++	dumpCount("armor", NUMARMORS);
++	for (int i = 0; i < NUMARMORS; ++i) {
++		const ArmorType &v = ArmorDefs[i];
++		JsonRecord row("armor", i);
++		row.text("abbreviation", v.abbr);
++		row.number("flags", v.flags);
++		row.number("from", v.from);
++		row.array("saves", NUM_WEAPON_CLASSES, [&](std::ostream &out, std::size_t j) {
++			out << v.saves[j];
++		});
++		row.finish();
++	}
++}
++
++void dumpMounts()
++{
++	dumpCount("mounts", NUMMOUNTS);
++	for (int i = 0; i < NUMMOUNTS; ++i) {
++		const MountType &v = MountDefs[i];
++		JsonRecord row("mounts", i);
++		row.text("abbreviation", v.abbr);
++		row.text("skill", v.skill);
++		row.number("minimum_bonus", v.minBonus);
++		row.number("maximum_bonus", v.maxBonus);
++		row.number("maximum_hampered_bonus", v.maxHamperedBonus);
++		row.text("special", v.mountSpecial);
++		row.number("special_level", v.specialLev);
++		row.finish();
++	}
++}
++
++void dumpBattleItems()
++{
++	dumpCount("battle_items", NUMBATTLEITEMS);
++	for (int i = 0; i < NUMBATTLEITEMS; ++i) {
++		const BattleItemType &v = BattleItemDefs[i];
++		JsonRecord row("battle_items", i);
++		row.text("abbreviation", v.abbr);
++		row.number("flags", v.flags);
++		row.text("special", v.special);
++		row.number("skill_level", v.skillLevel);
++		row.number("hit_damage", v.hitDamage);
++		row.finish();
++	}
++}
++
++void dumpObjects()
++{
++	dumpCount("objects", NOBJECTS);
++	for (int i = 0; i < NOBJECTS; ++i) {
++		const ObjectType &v = ObjectDefs[i];
++		JsonRecord row("objects", i);
++		row.text("name", v.name);
++		row.number("flags", v.flags);
++		row.number("protection", v.protect);
++		row.number("capacity", v.capacity);
++		row.number("sailors", v.sailors);
++		row.number("maximum_mages", v.maxMages);
++		row.number("item", v.item);
++		row.number("cost", v.cost);
++		row.text("skill", v.skill);
++		row.number("level", v.level);
++		row.number("maximum_maintenance", v.maxMaintenance);
++		row.number("maximum_monthly_decay", v.maxMonthlyDecay);
++		row.number("maintenance_factor", v.maintFactor);
++		row.number("monster", v.monster);
++		row.number("production_aided", v.productionAided);
++		row.array("defense", NUM_ATTACK_TYPES, [&](std::ostream &out, std::size_t j) {
++			out << v.defenceArray[j];
++		});
++		row.finish();
++	}
++}
++
++void dumpSkills()
++{
++	dumpCount("skills", NSKILLS);
++	for (int i = 0; i < NSKILLS; ++i) {
++		const SkillType &v = SkillDefs[i];
++		JsonRecord row("skills", i);
++		row.text("name", v.name);
++		row.text("abbreviation", v.abbr);
++		row.number("cost", v.cost);
++		row.number("flags", v.flags);
++		row.text("special", v.special);
++		row.text("range", v.range);
++		row.array("dependencies", 3, [&](std::ostream &out, std::size_t j) {
++			out << "{\"skill\":";
++			writeJsonString(out, v.depends[j].skill);
++			out << ",\"level\":" << v.depends[j].level << '}';
++		});
++		row.finish();
++	}
++}
++
++void dumpTerrains()
++{
++	dumpCount("terrains", NUMTERRAINS);
++	for (int i = 0; i < NUMTERRAINS; ++i) {
++		const TerrainType &v = TerrainDefs[i];
++		char marker[] = {v.marker, '\0'};
++		JsonRecord row("terrains", i);
++		row.text("name", v.name);
++		row.text("plural", v.plural);
++		row.text("type", v.type);
++		row.text("marker", marker);
++		row.number("similar_type", v.similar_type);
++		row.number("flags", v.flags);
++		row.number("population", v.pop);
++		row.number("wages", v.wages);
++		row.number("economy", v.economy);
++		row.number("movement_points", v.movepoints);
++		row.array("products", 7, [&](std::ostream &out, std::size_t j) {
++			out << "{\"item\":" << v.prods[j].product
++					<< ",\"chance\":" << v.prods[j].chance
++					<< ",\"amount\":" << v.prods[j].amount << '}';
++		});
++		row.array("races", 4, [&](std::ostream &out, std::size_t j) {
++			out << v.races[j];
++		});
++		row.array("coastal_races", 3, [&](std::ostream &out, std::size_t j) {
++			out << v.coastal_races[j];
++		});
++		row.number("wandering_monster_frequency", v.wmonfreq);
++		row.number("small_monster", v.smallmon);
++		row.number("big_monster", v.bigmon);
++		row.number("humanoid", v.humanoid);
++		row.number("lair_chance", v.lairChance);
++		row.array("lairs", 6, [&](std::ostream &out, std::size_t j) {
++			out << v.lairs[j];
++		});
++		row.finish();
++	}
++}
++
++void dumpHealing(const char *table, const HealType *values, int count)
++{
++	dumpCount(table, count);
++	for (int i = 0; i < count; ++i) {
++		JsonRecord row(table, i);
++		row.number("number", values[i].num);
++		row.number("rate", values[i].rate);
++		row.finish();
++	}
++}
++
++void dumpSpecials()
++{
++	dumpCount("specials", NUMSPECIALS);
++	for (int i = 0; i < NUMSPECIALS; ++i) {
++		const SpecialType &v = SpecialDefs[i];
++		JsonRecord row("specials", i);
++		row.text("key", v.key);
++		row.text("name", v.specialname);
++		row.number("target_flags", v.targflags);
++		row.array("buildings", SPECIAL_BUILDINGS,
++				[&](std::ostream &out, std::size_t j) {
++			out << v.buildings[j];
++		});
++		row.array("targets", 7, [&](std::ostream &out, std::size_t j) {
++			out << v.targets[j];
++		});
++		row.array("effects", 3, [&](std::ostream &out, std::size_t j) {
++			writeJsonString(out, v.effects[j]);
++		});
++		row.number("effect_flags", v.effectflags);
++		row.array("shields", 4, [&](std::ostream &out, std::size_t j) {
++			out << v.shield[j];
++		});
++		row.array("defenses", 4, [&](std::ostream &out, std::size_t j) {
++			out << "{\"type\":" << v.defs[j].type
++					<< ",\"value\":" << v.defs[j].val << '}';
++		});
++		row.text("shield_description", v.shielddesc);
++		row.array("damage", 4, [&](std::ostream &out, std::size_t j) {
++			const DamageType &damage = v.damage[j];
++			out << "{\"type\":" << damage.type
++					<< ",\"minimum\":" << damage.minnum
++					<< ",\"value\":" << damage.value
++					<< ",\"flags\":" << damage.flags
++					<< ",\"class\":" << damage.dclass
++					<< ",\"effect\":";
++			writeJsonString(out, damage.effect);
++			out << ",\"hit_damage\":" << damage.hitDamage << '}';
++		});
++		row.text("spell_description", v.spelldesc);
++		row.text("secondary_spell_description", v.spelldesc2);
++		row.text("spell_target", v.spelltarget);
++		row.finish();
++	}
++}
++
++void dumpEffects()
++{
++	dumpCount("effects", NUMEFFECTS);
++	for (int i = 0; i < NUMEFFECTS; ++i) {
++		const EffectType &v = EffectDefs[i];
++		JsonRecord row("effects", i);
++		row.text("name", v.name);
++		row.number("attack_value", v.attackVal);
++		row.array("defense_modifiers", 4,
++				[&](std::ostream &out, std::size_t j) {
++			out << "{\"type\":" << v.defMods[j].type
++					<< ",\"value\":" << v.defMods[j].val << '}';
++		});
++		row.text("cancel_effect", v.cancelEffect);
++		row.number("flags", v.flags);
++		row.finish();
++	}
++}
++
++void dumpRanges()
++{
++	dumpCount("ranges", NUMRANGES);
++	for (int i = 0; i < NUMRANGES; ++i) {
++		const RangeType &v = RangeDefs[i];
++		JsonRecord row("ranges", i);
++		row.text("key", v.key);
++		row.number("flags", v.flags);
++		row.number("range_class", v.rangeClass);
++		row.number("range_multiplier", v.rangeMult);
++		row.number("cross_level_penalty", v.crossLevelPenalty);
++		row.finish();
++	}
++}
++
++void dumpAttributes()
++{
++	dumpCount("attribute_modifiers", NUMATTRIBMODS);
++	for (int i = 0; i < NUMATTRIBMODS; ++i) {
++		const AttribModType &v = AttribDefs[i];
++		JsonRecord row("attribute_modifiers", i);
++		row.text("key", v.key);
++		row.number("flags", v.flags);
++		row.array("modifiers", 5, [&](std::ostream &out, std::size_t j) {
++			out << "{\"flags\":" << v.mods[j].flags << ",\"identifier\":";
++			writeJsonString(out, v.mods[j].ident);
++			out << ",\"type\":" << v.mods[j].modtype
++					<< ",\"value\":" << v.mods[j].val << '}';
++		});
++		row.finish();
++	}
++}
++
++}
++
++int DumpTables()
++{
++	JsonRecord schema("metadata");
++	schema.number("format_version", 1);
++	schema.finish();
++
++	dumpGlobals();
++	dumpItems();
++	dumpRaces();
++	dumpMonsters();
++	dumpWeapons();
++	dumpArmor();
++	dumpMounts();
++	dumpBattleItems();
++	dumpObjects();
++	dumpSkills();
++	dumpTerrains();
++	dumpHealing("healing", HealDefs, 7);
++	dumpHealing("magic_healing", MagicHealDefs, 6);
++	dumpSpecials();
++	dumpEffects();
++	dumpRanges();
++	dumpAttributes();
++	std::cout.flush();
++	return std::cout ? 0 : 1;
++}
++
+ void usage()
+ {
+ 	Awrite("atlantis new");
+@@ -52,6 +752,14 @@
+ 
+ 	initIO();
+ 
++	if (argc == 2 && AString(argv[1]) == "dump-tables") {
++		game.ModifyTablesPerRuleset();
++		int result = DumpTables();
++		if (result != 0) std::cerr << "Unable to write effective rules tables\n";
++		doneIO();
++		return result;
++	}
++
+ 	Awrite(AString("Atlantis Engine Version: ") +
+ 			ATL_VER_STRING(CURRENT_ATL_VER));
+ 	Awrite(AString(Globals->RULESET_NAME) + ", Version: " +
