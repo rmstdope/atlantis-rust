@@ -1,0 +1,74 @@
+--- a/gameio.cpp
++++ b/gameio.cpp
+@@ -28,5 +28,7 @@
+ #include "gameio.h"
+ #include "gamedefs.h"
++#include <errno.h>
++#include <limits.h>
+ #include <stdlib.h>
+ #include <stdio.h>
+ #include <time.h>
+@@ -58,16 +60,43 @@
+ void doneIO()
+ {
+ }
+ 
++static void trace_random(int range, int result)
++{
++	const char *path = getenv("ATLANTIS_RNG_TRACE");
++	if (!path || !*path) return;
++
++	static unsigned long long sequence = 0;
++	FILE *trace = fopen(path, "a");
++	if (!trace) {
++		perror("ATLANTIS_RNG_TRACE");
++		exit(EXIT_FAILURE);
++	}
++	if (fprintf(trace, "%llu %d %d\n", sequence, range, result) < 0) {
++		int saved_errno = errno;
++		fclose(trace);
++		errno = saved_errno;
++		perror(path);
++		exit(EXIT_FAILURE);
++	}
++	++sequence;
++	if (fclose(trace) != 0) {
++		perror(path);
++		exit(EXIT_FAILURE);
++	}
++}
++
+ int getrandom(int range)
+ {
++	int trace_range = range;
+ 	int neg = (range < 0);
+ 	if (!range) return 0;
+ 	int ret = 0;
+ 	if (neg) range = -range;
+ 	unsigned long i = isaac_rand( &isaac_ctx );
+ 	i = i % range;
+ 	if (neg) ret = (int)(i*-1);
+ 	else ret = (int)i;
++	trace_random(trace_range, ret);
+ 	return ret;
+ }
+@@ -82,4 +111,18 @@
+ void seedrandomrandom()
+ {
+-	seedrandom( time( 0 ) );
++	const char *override = getenv("ATLANTIS_SEED");
++	if (!override) {
++		seedrandom(time(0));
++		return;
++	}
++
++	char *end = NULL;
++	errno = 0;
++	long value = strtol(override, &end, 10);
++	if (errno != 0 || end == override || *end != '\0' ||
++			value < INT_MIN || value > INT_MAX) {
++		fprintf(stderr, "Invalid ATLANTIS_SEED value: %s\n", override);
++		exit(EXIT_FAILURE);
++	}
++	seedrandom((int)value);
+ }
