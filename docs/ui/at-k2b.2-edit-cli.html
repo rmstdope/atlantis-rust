@@ -1,0 +1,33 @@
+<html><body style="font-family:sans-serif;max-width:860px;margin:20px auto"><h2>atlantis edit — agreed shape</h2>
+<pre style="background:#111;color:#ddd;padding:14px;font-size:13px;line-height:1.35">
+$ atlantis edit region 12 8 0 set-terrain forest
+Region (12,8) "Aldor": terrain plain -&gt; forest
+Saved game.in
+Previous version kept as game.in.bak
+
+$ atlantis edit region 12 8 0 set-terrain forest --dry-run
+Region (12,8) "Aldor": terrain plain -&gt; forest
+Dry run: nothing saved.
+
+$ atlantis edit region 99 99 0 set-terrain forest
+error: there is no region at (99,8,0). Nothing was changed.
+
+$ atlantis edit unit 4021 set-item SILV 500 --out game.new
+Unit Merchants (4021): silver 120 -&gt; 500
+Saved game.new
+
+$ atlantis edit region 12 8 0 set-terrain
+error: set-terrain needs a terrain name. Try: atlantis edit region --help
+
+$ atlantis edit --script empty.txt
+error: empty.txt has no edits. Nothing was changed.
+
+$ atlantis edit --help
+Usage: atlantis edit &lt;what&gt; ... [--out FILE] [--dry-run]
+  region X Y Z   set-terrain | set-race | set-wages | set-name | regenerate-products | regenerate-all
+                 add-gate | remove-gate | add-town | regenerate-town | remove-town | rename-town
+                 add-object | remove-object | rename-object | market ...
+  unit NUM       set-item | set-skill | set-faction | set-type | set-location | ...
+  --script FILE  apply every line of FILE, all or nothing (lines starting # are comments)
+Names are not case-sensitive; item and skill abbreviations (SILV) work as well as full names.
+</pre></body></html>
