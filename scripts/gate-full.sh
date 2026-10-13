@@ -32,8 +32,24 @@ if [[ "$fast" == true ]]; then
     exit 0
 fi
 
-printf '%s\n' '==> cargo test -p atlantis-engine --locked replay'
-cargo test -p atlantis-engine --locked replay
+fixture_dir=
+if [[ -d fixtures ]]; then
+    fixture_dir=$(find fixtures -type d -name 'turn_*' -print -quit)
+fi
+
+if [[ -n "$fixture_dir" ]]; then
+    printf '%s\n' '==> checking for fixture replay tests'
+    replay_tests=$(cargo test -p atlantis-engine --locked replay -- --list)
+    if ! grep -qE ': test$' <<<"$replay_tests"; then
+        printf 'Found fixtures under %s, but no tests matched the replay selector\n' "$fixture_dir" >&2
+        exit 1
+    fi
+
+    printf '%s\n' '==> cargo test -p atlantis-engine --locked replay'
+    cargo test -p atlantis-engine --locked replay
+else
+    printf '%s\n' 'No recorded fixtures found; skipping fixture replay tests'
+fi
 
 printf '%s\n' '==> checking atlantis-engine for filesystem, stdin, and clock APIs'
 if grep -R -n -E 'std::fs|std::io::stdin|SystemTime|Instant' crates/atlantis-engine/src; then
