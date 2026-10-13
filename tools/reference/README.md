@@ -47,7 +47,14 @@ JSON Lines to stdout without the engine banner. Each line is an object with a `t
   terrains, regular and magical healing, specials, effects, ranges, and attribute modifiers.
 
 Rows and their fixed-size arrays use source table order and numeric enum values. Strings are JSON
-escaped; null C++ strings are JSON `null`.
+escaped; null C++ strings are JSON `null`. Check both rulesets' output after building:
+
+```bash
+tools/reference/check-tables.py "$reference_root"
+```
+
+The check validates JSONL, determinism, all `GameDefs` members, table row counts, and the known
+`SBOW` ruleset difference.
 
 ## Recording a feature-area turn
 
@@ -61,9 +68,10 @@ tools/reference/record-turn.sh standard <area>
 The first call stages `turn_N+1`: it copies `game.out` to `game.in`, `players.out` to `players.in`,
 and each `template.N` to `orders.N`. Edit one or more staged order files and run the same command
 again. Unchanged orders are rejected. The second call builds both reference rulesets, runs the
-selected one in the new turn directory, and keeps the generated game, player, report, template,
-Times, and console outputs there. Staging starts in a clean directory, so earlier `times.*` files
-cannot change the reference engine's random draw count.
+selected one in the new turn directory, then replays the same inputs in a clean temporary directory.
+It keeps the generated game, player, report, template, Times, and console outputs only when every
+output matches byte-for-byte. Staging starts in a clean directory, so earlier `times.*` files cannot
+change the reference engine's random draw count.
 
 The command validates the ruleset, area, turn sequence, staged inputs, and order/template names.
 It requires a complete prior fixture; importing or generating a baseline fixture is a separate

@@ -230,5 +230,70 @@ if ! is_complete_turn "$target_dir"; then
 	exit 1
 fi
 
+if ! replay_dir=$(mktemp -d "${TMPDIR:-/tmp}/atlantis-reference-replay.XXXXXX"); then
+	printf 'Unable to create a temporary directory to verify %s.\n' \
+			"${target_dir##*/}" >&2
+	remove_generated_outputs "$target_dir"
+	exit 1
+fi
+trap 'rm -rf -- "$replay_dir"' EXIT
+
+replay_inputs=("$target_dir/game.in" "$target_dir/players.in" \
+		"$target_dir"/orders.[0-9]*)
+if ! cp "${replay_inputs[@]}" "$replay_dir/"; then
+	printf 'Unable to stage inputs for replay verification of %s.\n' \
+			"${target_dir##*/}" >&2
+	remove_generated_outputs "$target_dir"
+	exit 1
+fi
+
+if (cd "$replay_dir" && "$reference_binary" run > engine-output.txt); then
+	:
+else
+	status=$?
+	printf 'Reference replay failed with status %s while verifying %s.\n' \
+			"$status" "${target_dir##*/}" >&2
+	if [[ -f "$replay_dir/engine-output.txt" ]]; then
+		cat "$replay_dir/engine-output.txt" >&2
+	fi
+	remove_generated_outputs "$target_dir"
+	exit "$status"
+fi
+
+if ! is_complete_turn "$replay_dir"; then
+	printf 'Reference replay returned success but left an incomplete turn while verifying %s.\n' \
+			"${target_dir##*/}" >&2
+	if [[ -f "$replay_dir/engine-output.txt" ]]; then
+		cat "$replay_dir/engine-output.txt" >&2
+	fi
+	remove_generated_outputs "$target_dir"
+	exit 1
+fi
+
+recorded_outputs=("$target_dir/game.out" "$target_dir/players.out" \
+		"$target_dir/engine-output.txt" "$target_dir"/report.* \
+		"$target_dir"/template.* "$target_dir"/times.*)
+replayed_outputs=("$replay_dir/game.out" "$replay_dir/players.out" \
+		"$replay_dir/engine-output.txt" "$replay_dir"/report.* \
+		"$replay_dir"/template.* "$replay_dir"/times.*)
+if (( ${#recorded_outputs[@]} != ${#replayed_outputs[@]} )); then
+	printf 'Reference replay produced a different set of outputs for %s.\n' \
+			"${target_dir##*/}" >&2
+	remove_generated_outputs "$target_dir"
+	exit 1
+fi
+
+for index in "${!recorded_outputs[@]}"; do
+	recorded=${recorded_outputs[$index]}
+	replayed=${replayed_outputs[$index]}
+	if [[ "${recorded##*/}" != "${replayed##*/}" ]] ||
+			! cmp -s "$recorded" "$replayed"; then
+		printf 'Reference replay mismatch in %s while verifying %s.\n' \
+				"${recorded##*/}" "${target_dir##*/}" >&2
+		remove_generated_outputs "$target_dir"
+		exit 1
+	fi
+done
+
 printf 'Recorded %s/%s/%s from %s.\n' \
 		"$ruleset" "$area" "${target_dir##*/}" "${latest_dir##*/}"
