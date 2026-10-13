@@ -75,11 +75,25 @@ These exist because every one of them has silently broken byte-identity before i
    two-space tabs; rules HTML at 78/70.
 5. **The engine crate touches no filesystem, stdin or clock.** The gate checks for it.
 6. **A fixture diff is read, never regenerated away.** Fixtures come from the C++ reference via
-   `tools/reference`, never from the Rust engine and never by hand edit.
+   `tools/reference`, never from the Rust engine and never by hand edit. This rule is rewritten
+   when the reference is retired (see below).
 
 Quirks and bugs of the original that must be preserved are listed in
 `docs/reference/quirks-to-preserve.md`. Known places where the original itself is
 non-deterministic are in `docs/reference/rng-and-determinism.md`.
+
+## The C++ reference is temporary
+
+Comparing against the original is a one-time check per area, not a permanent dependency.
+
+- **The gate never builds or runs C++.** Everything the reference produces is committed as data:
+  fixture turns, table dumps, RNG traces, `check` outputs, world-generation statistics. CI compares
+  against those files only.
+- `tools/reference` is a development tool for recording new fixtures and for tracing a mismatch.
+  Nothing under `crates/` or `scripts/gate-full.sh` may call it.
+- When every replica area is verified, a final bead removes `tools/reference`. From then on the
+  fixtures are owned by the Rust engine: a change to them is a reviewed diff, and a deliberate
+  departure from the original (approved by the navigator) is the only reason to accept one.
 
 ## Porting a piece of the original
 
@@ -127,7 +141,7 @@ fixture replay that proves it.
 ./scripts/gate-full.sh --fast        # fmt, clippy, unit tests, fast fixture subset
 ./scripts/gate-full.sh               # everything, incl. all fixtures and the no-fs check
 cargo test -p atlantis-engine --locked replay      # fixture replay tests
-tools/reference/build.sh             # build the patched C++ reference into a scratch dir
+tools/reference/build.sh             # build the patched C++ reference into a scratch dir (dev only)
 tools/reference/record-turn.sh <ruleset> <area>    # record a new fixture turn
 ```
 
