@@ -1,8 +1,8 @@
 //! Pure Rust core for the Atlantis game engine.
 
 pub mod output;
-pub mod version;
 pub mod text;
+pub mod version;
 
 #[cfg(test)]
 mod version_tests {
