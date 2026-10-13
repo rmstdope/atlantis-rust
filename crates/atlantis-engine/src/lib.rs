@@ -2,6 +2,7 @@
 
 pub mod output;
 pub mod version;
+pub mod text;
 
 #[cfg(test)]
 mod version_tests {
