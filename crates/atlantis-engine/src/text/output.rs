@@ -3,7 +3,7 @@ use super::trunc;
 /// In-memory counterpart of `Areport`.
 #[derive(Default)]
 pub struct ReportWriter {
-    output: String,
+    output: Vec<u8>,
     tabs: usize,
 }
 
@@ -31,46 +31,48 @@ impl ReportWriter {
     /// C++: `fileio.cpp` `Areport::PutStr` (lines 278-298).
     pub fn put_str(&mut self, text: &str, comment: bool) {
         let mut current = self.indentation();
-        current.push_str(text);
+        current.extend_from_slice(text.as_bytes());
         loop {
             let remainder = trunc(&mut current, 70, 30);
             if comment {
-                self.output.push(';');
+                self.output.push(b';');
             }
-            self.output.push_str(&current);
-            self.output.push('\n');
+            self.output.extend_from_slice(&current);
+            self.output.push(b'\n');
             let Some(remainder) = remainder else {
                 break;
             };
-            current = format!("  {}{}", self.indentation(), remainder);
+            current = b"  ".to_vec();
+            current.extend_from_slice(&self.indentation());
+            current.extend_from_slice(&remainder);
         }
     }
 
     /// C++: `fileio.cpp` `Areport::PutNoFormat`.
     pub fn put_no_format(&mut self, text: &str) {
-        self.output.push_str(text);
-        self.output.push('\n');
+        self.output.extend_from_slice(text.as_bytes());
+        self.output.push(b'\n');
     }
 
     /// C++: `fileio.cpp` `Areport::EndLine`.
     pub fn end_line(&mut self) {
-        self.output.push('\n');
+        self.output.push(b'\n');
     }
 
-    /// Return the bytes written so far as UTF-8 text.
-    pub fn as_str(&self) -> &str {
+    /// Return the bytes written so far.
+    pub fn as_bytes(&self) -> &[u8] {
         &self.output
     }
 
-    fn indentation(&self) -> String {
-        "  ".repeat(self.tabs)
+    fn indentation(&self) -> Vec<u8> {
+        b"  ".repeat(self.tabs)
     }
 }
 
 /// In-memory counterpart of `Arules`.
 #[derive(Default)]
 pub struct RulesWriter {
-    output: String,
+    output: Vec<u8>,
     tabs: usize,
     wrap_tabs: usize,
 }
@@ -114,43 +116,45 @@ impl RulesWriter {
     /// C++: `fileio.cpp` `Arules::PutStr` (lines 367-382).
     pub fn put_str(&mut self, text: &str) {
         let mut current = self.indentation(self.tabs);
-        current.push_str(text);
+        current.extend_from_slice(text.as_bytes());
         loop {
             let remainder = trunc(&mut current, 78, 70);
-            self.output.push_str(&current);
-            self.output.push('\n');
+            self.output.extend_from_slice(&current);
+            self.output.push(b'\n');
             let Some(remainder) = remainder else {
                 break;
             };
             current = self.indentation(self.tabs);
-            current.push_str(&remainder);
+            current.extend_from_slice(&remainder);
         }
     }
 
     /// C++: `fileio.cpp` `Arules::WrapStr` (lines 384-395).
     pub fn wrap_str(&mut self, text: &str) {
         let mut current = self.indentation(self.wrap_tabs);
-        current.push_str(text);
+        current.extend_from_slice(text.as_bytes());
         loop {
             let remainder = trunc(&mut current, 70, 30);
-            self.output.push_str(&current);
-            self.output.push('\n');
+            self.output.extend_from_slice(&current);
+            self.output.push(b'\n');
             let Some(remainder) = remainder else {
                 break;
             };
-            current = format!("  {}{}", self.indentation(self.wrap_tabs), remainder);
+            current = b"  ".to_vec();
+            current.extend_from_slice(&self.indentation(self.wrap_tabs));
+            current.extend_from_slice(&remainder);
         }
     }
 
     /// C++: `fileio.cpp` `Arules::PutNoFormat`.
     pub fn put_no_format(&mut self, text: &str) {
-        self.output.push_str(text);
-        self.output.push('\n');
+        self.output.extend_from_slice(text.as_bytes());
+        self.output.push(b'\n');
     }
 
     /// C++: `fileio.cpp` `Arules::EndLine`.
     pub fn end_line(&mut self) {
-        self.output.push('\n');
+        self.output.push(b'\n');
     }
 
     /// C++: `fileio.cpp` `Arules::Enclose`.
@@ -202,19 +206,23 @@ impl RulesWriter {
         self.put_str(&format!("<a name=\"{name}\"></a>"));
     }
 
-    /// Return the bytes written so far as UTF-8 text.
-    pub fn as_str(&self) -> &str {
+    /// Return the bytes written so far.
+    pub fn as_bytes(&self) -> &[u8] {
         &self.output
     }
 
-    fn indentation(&self, tabs: usize) -> String {
-        "  ".repeat(tabs)
+    fn indentation(&self, tabs: usize) -> Vec<u8> {
+        b"  ".repeat(tabs)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{ReportWriter, RulesWriter};
+
+    fn output_text(bytes: &[u8]) -> &str {
+        std::str::from_utf8(bytes).expect("test output is valid UTF-8")
+    }
 
     // C++: fileio.cpp Areport::PutStr, lines 278-298.
     #[test]
@@ -226,11 +234,30 @@ mod tests {
 
         let text = "word ".repeat(20);
         report.put_str(&text, true);
-        let lines: Vec<_> = report.as_str().lines().collect();
+        let lines: Vec<_> = output_text(report.as_bytes()).lines().collect();
         assert_eq!(lines[0], "  nested");
         assert_eq!(lines[1], format!(";{}word", "word ".repeat(13)));
         assert_eq!(lines[2], format!(";  {}", "word ".repeat(6)));
         assert!(lines.iter().all(|line| line.len() <= 71));
+    }
+
+    // C++: fileio.cpp Areport::PutStr and astring.cpp AString::Trunc.
+    #[test]
+    fn report_writer_keeps_short_embedded_newlines_verbatim() {
+        let mut report = ReportWriter::new();
+        report.put_str("first\nsecond", true);
+        assert_eq!(report.as_bytes(), b";first\nsecond\n");
+    }
+
+    // C++: fileio.cpp Areport::PutStr and astring.cpp AString::Trunc, which count bytes.
+    #[test]
+    fn report_writer_wraps_at_byte_width_even_inside_utf8() {
+        let mut report = ReportWriter::new();
+        report.put_str(&format!("{}éz", "x".repeat(69)), false);
+
+        let mut expected = vec![b'x'; 69];
+        expected.extend_from_slice(&[0xc3, b'\n', b' ', b' ', 0xa9, b'z', b'\n']);
+        assert_eq!(report.as_bytes(), expected);
     }
 
     // C++: fileio.cpp Areport::PutStr/PutNoFormat/EndLine, lines 278-307.
@@ -243,7 +270,7 @@ mod tests {
         report.drop_tab();
         report.drop_tab();
         report.put_str("plain", false);
-        assert_eq!(report.as_str(), "exact\n\nplain\n");
+        assert_eq!(report.as_bytes(), b"exact\n\nplain\n");
     }
 
     // C++: fileio.cpp Arules::PutStr/WrapStr, lines 367-395.
@@ -252,10 +279,8 @@ mod tests {
         let mut rules = RulesWriter::new();
         rules.put_str(&"x".repeat(79));
         rules.wrap_str(&"y".repeat(71));
-        assert_eq!(
-            rules.as_str(),
-            format!("{}\nx\n{}\n  y\n", "x".repeat(78), "y".repeat(70))
-        );
+        let expected = format!("{}\nx\n{}\n  y\n", "x".repeat(78), "y".repeat(70));
+        assert_eq!(rules.as_bytes(), expected.as_bytes());
     }
 
     // C++: fileio.cpp Arules::PutStr/WrapStr, lines 367-395.
@@ -266,28 +291,24 @@ mod tests {
         rules.put_str("plain");
         rules.add_wrap_tab();
         rules.wrap_str("wrapped");
-        assert_eq!(rules.as_str(), "  plain\n  wrapped\n");
+        assert_eq!(rules.as_bytes(), b"  plain\n  wrapped\n");
 
         let mut put = RulesWriter::new();
         let put_text = format!("{} {}", "x".repeat(20), "y".repeat(64));
         put.put_str(&put_text);
-        assert_eq!(
-            put.as_str(),
-            format!("{}\n{}\n", "x".repeat(20), "y".repeat(64))
-        );
+        let put_expected = format!("{}\n{}\n", "x".repeat(20), "y".repeat(64));
+        assert_eq!(put.as_bytes(), put_expected.as_bytes());
 
         let mut wrap = RulesWriter::new();
         let wrap_text = format!("{} {}", "x".repeat(20), "y".repeat(54));
         wrap.wrap_str(&wrap_text);
-        assert_eq!(
-            wrap.as_str(),
-            format!(
-                "{} {}\n  {}\n",
-                "x".repeat(20),
-                "y".repeat(49),
-                "y".repeat(5)
-            )
+        let wrap_expected = format!(
+            "{} {}\n  {}\n",
+            "x".repeat(20),
+            "y".repeat(49),
+            "y".repeat(5)
         );
+        assert_eq!(wrap.as_bytes(), wrap_expected.as_bytes());
     }
 
     // C++: fileio.cpp Arules::Enclose/TagText/Paragraph/CommandExample/Link/LinkRef.
@@ -296,8 +317,8 @@ mod tests {
         let mut rules = RulesWriter::new();
         rules.paragraph("Text");
         rules.link_ref("begin");
-        assert!(rules.as_str().contains("<p>\n  Text\n</p>\n"));
-        assert!(rules.as_str().contains("<a name=\"begin\"></a>\n"));
+        assert!(output_text(rules.as_bytes()).contains("<p>\n  Text\n</p>\n"));
+        assert!(output_text(rules.as_bytes()).contains("<a name=\"begin\"></a>\n"));
         assert_eq!(RulesWriter::link("url", "text"), "<a href=\"url\">text</a>");
     }
 
@@ -308,7 +329,7 @@ mod tests {
         rules.class_tag_text("div", "notice", "Body");
         rules.command_example("Example", "atlantis run");
         assert_eq!(
-            rules.as_str(),
+            output_text(rules.as_bytes()),
             "<div class=\"notice\">\n  Body\n</div>\n\
              <p>\n  Example\n</p>\n\
              <p>\n  \n</p>\n\

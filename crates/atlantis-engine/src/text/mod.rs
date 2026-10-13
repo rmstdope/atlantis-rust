@@ -158,47 +158,35 @@ pub fn get_at(input: &mut String) -> bool {
 /// C++: `astring.cpp` `AString::Trunc` (lines 330-348).
 ///
 /// The prefix remains in `input`; the returned value is the remainder after
-/// the consumed newline, space, or hard-width boundary.
-pub fn trunc(input: &mut String, width: usize, back: usize) -> Option<String> {
+/// the consumed newline, space, or hard byte-width boundary.
+pub fn trunc(input: &mut Vec<u8>, width: usize, back: usize) -> Option<Vec<u8>> {
     if input.len() <= width {
         return None;
     }
 
-    let bytes = input.as_bytes();
-    if let Some(index) = bytes[..width]
+    if let Some(index) = input[..width]
         .iter()
         .position(|byte| matches!(byte, b'\n' | b'\r'))
     {
-        let remainder = input[index + 1..].to_owned();
+        let remainder = input[index + 1..].to_vec();
         input.truncate(index);
         return Some(remainder);
     }
 
     if back > 0 {
-        let first_index = if back > width { 0 } else { width - back + 1 };
-        if first_index <= width {
-            for index in (first_index..=width).rev() {
-                if bytes[index] == b' ' {
-                    let remainder = input[index + 1..].to_owned();
-                    input.truncate(index);
-                    return Some(remainder);
-                }
-            }
+        let first_index = width.saturating_sub(back - 1);
+        if let Some(index) = (first_index..=width)
+            .rev()
+            .find(|index| input[*index] == b' ')
+        {
+            let remainder = input[index + 1..].to_vec();
+            input.truncate(index);
+            return Some(remainder);
         }
     }
 
-    let boundary = if input.is_char_boundary(width) {
-        width
-    } else {
-        input
-            .char_indices()
-            .map(|(index, _)| index)
-            .take_while(|index| *index < width)
-            .last()
-            .unwrap_or(0)
-    };
-    let remainder = input[boundary..].to_owned();
-    input.truncate(boundary);
+    let remainder = input[width..].to_vec();
+    input.truncate(width);
     Some(remainder)
 }
 
@@ -323,25 +311,33 @@ mod tests {
     // C++: astring.cpp AString::Trunc, lines 330-348.
     #[test]
     fn trunc_prefers_nearby_spaces_then_newlines_then_a_hard_cut() {
-        let mut spaced = "0123456789 word".to_owned();
-        assert_eq!(trunc(&mut spaced, 10, 5).as_deref(), Some("word"));
-        assert_eq!(spaced, "0123456789");
+        let mut spaced = b"0123456789 word".to_vec();
+        assert_eq!(trunc(&mut spaced, 10, 5), Some(b"word".to_vec()));
+        assert_eq!(spaced, b"0123456789");
 
-        let mut newline = "first\nsecond".to_owned();
-        assert_eq!(trunc(&mut newline, 10, 30).as_deref(), Some("second"));
-        assert_eq!(newline, "first");
+        let mut newline = b"first\nsecond".to_vec();
+        assert_eq!(trunc(&mut newline, 10, 30), Some(b"second".to_vec()));
+        assert_eq!(newline, b"first");
 
-        let mut hard_cut = "abcdefghijklmnop".to_owned();
-        assert_eq!(trunc(&mut hard_cut, 6, 3).as_deref(), Some("ghijklmnop"));
-        assert_eq!(hard_cut, "abcdef");
+        let mut hard_cut = b"abcdefghijklmnop".to_vec();
+        assert_eq!(trunc(&mut hard_cut, 6, 3), Some(b"ghijklmnop".to_vec()));
+        assert_eq!(hard_cut, b"abcdef");
     }
 
     // C++: astring.cpp AString::Trunc, lines 330-348.
     #[test]
     fn trunc_checks_the_zero_index_when_back_exceeds_width() {
-        let mut input = " abcdefghij".to_owned();
-        assert_eq!(trunc(&mut input, 10, 30).as_deref(), Some("abcdefghij"));
-        assert_eq!(input, "");
+        let mut input = b" abcdefghij".to_vec();
+        assert_eq!(trunc(&mut input, 10, 30), Some(b"abcdefghij".to_vec()));
+        assert_eq!(input, b"");
+    }
+
+    // C++: astring.cpp AString::Trunc, lines 330-348, which counts bytes.
+    #[test]
+    fn trunc_splits_multibyte_text_at_the_original_byte_width() {
+        let mut input = format!("{}éz", "x".repeat(69)).into_bytes();
+        assert_eq!(trunc(&mut input, 70, 30), Some(vec![0xa9, b'z']));
+        assert_eq!(input, [vec![b'x'; 69], vec![0xc3]].concat());
     }
 
     // C++: astring.cpp plural/join/capitalize, lines 400-464.

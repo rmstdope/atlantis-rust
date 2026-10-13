@@ -5,17 +5,72 @@ const REPORTS: &[&str] = &[
     include_str!("fixtures/text/neworigins-turn-8-report-3.txt"),
 ];
 
+// 0-based, end-exclusive physical-line ranges pinned independently of the writer.
+const REFERENCE_GROUPS: &[&[(usize, usize)]] = &[
+    &[
+        (19, 25),
+        (26, 31),
+        (32, 47),
+        (50, 52),
+        (63, 65),
+        (66, 70),
+        (84, 86),
+        (87, 91),
+    ],
+    &[
+        (26, 28),
+        (32, 34),
+        (39, 41),
+        (52, 56),
+        (56, 60),
+        (60, 64),
+        (64, 68),
+        (68, 72),
+        (72, 76),
+        (78, 82),
+        (92, 96),
+        (96, 100),
+        (100, 104),
+        (104, 108),
+        (108, 112),
+        (112, 116),
+        (118, 122),
+        (128, 132),
+        (132, 136),
+        (136, 140),
+        (140, 144),
+        (144, 148),
+        (148, 152),
+        (154, 158),
+        (170, 172),
+        (172, 174),
+        (174, 176),
+        (176, 178),
+        (178, 180),
+        (183, 191),
+        (201, 203),
+        (203, 210),
+        (221, 233),
+        (233, 236),
+        (236, 239),
+        (239, 242),
+        (242, 245),
+        (245, 248),
+    ],
+];
+
 #[test]
 fn reference_reports_reflow_to_the_exact_cxx_text() {
-    for expected in REPORTS {
+    for (fixture_index, expected) in REPORTS.iter().enumerate() {
         let mut report = ReportWriter::new();
+        let reference_groups = REFERENCE_GROUPS[fixture_index];
         let lines: Vec<_> = expected
             .strip_suffix('\n')
             .unwrap_or(expected)
             .split('\n')
             .collect();
         let mut index = 0;
-        let mut reflowed_groups = 0;
+        let mut group_index = 0;
         while index < lines.len() {
             let line = lines[index];
             if line.is_empty() {
@@ -27,40 +82,27 @@ fn reference_reports_reflow_to_the_exact_cxx_text() {
             let comment = line.starts_with(';');
             let body = line_body(line, comment);
             let indent = leading_spaces(body) / 2 * 2;
-            let mut group = vec![line];
-            while index + group.len() < lines.len() {
-                let next = lines[index + group.len()];
-                if next.is_empty() || next.starts_with(';') != comment {
-                    break;
+            let group_end = match reference_groups.get(group_index) {
+                Some(&(start, end)) if start == index => {
+                    group_index += 1;
+                    end
                 }
-                let next_body = line_body(next, comment);
-                if !next_body.starts_with(&" ".repeat(indent + 2)) {
-                    break;
-                }
-
-                let mut candidate = group.clone();
-                candidate.push(next);
-                if unwrapped_input(&candidate, comment, indent).is_none() {
-                    break;
-                }
-                group.push(next);
-                reflowed_groups += 1;
-            }
-
-            let input = unwrapped_input(&group, comment, indent)
-                .expect("each physical report line can be represented as a writer input");
+                _ => index + 1,
+            };
+            assert!(group_end <= lines.len());
+            let group = &lines[index..group_end];
+            let input = unwrapped_input(group, comment, indent).unwrap_or_else(|| {
+                panic!("reference group {fixture_index}:{index}..{group_end} has no matching input")
+            });
             report.clear_tab();
             for _ in 0..indent / 2 {
                 report.add_tab();
             }
             report.put_str(&input, comment);
-            index += group.len();
+            index = group_end;
         }
-        assert_eq!(report.as_str(), *expected);
-        assert!(
-            reflowed_groups > 0,
-            "fixture should exercise continuation wrapping"
-        );
+        assert_eq!(report.as_bytes(), expected.as_bytes());
+        assert_eq!(group_index, reference_groups.len());
     }
 }
 
@@ -105,7 +147,7 @@ fn unwrapped_input(lines: &[&str], comment: bool, indent: usize) -> Option<Strin
                 writer.add_tab();
             }
             writer.put_str(input, comment);
-            return writer.as_str() == expected;
+            return writer.as_bytes() == expected.as_bytes();
         }
 
         let previous = line_body(lines[index], comment);
