@@ -34,3 +34,6 @@ rustc-ice-*.txt
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Emacs
+*~
