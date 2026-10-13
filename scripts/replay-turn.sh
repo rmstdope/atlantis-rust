@@ -49,6 +49,17 @@ if [[ ! -f "$turn_dir/game.out" || ! -f "$turn_dir/players.out" || ! -f "$turn_d
     exit 2
 fi
 
+expected_reports=("$turn_dir"/report.*)
+expected_templates=("$turn_dir"/template.*)
+if [[ ${#expected_reports[@]} -eq 0 ]]; then
+    printf 'Turn directory is missing required expected output family: report.*\n' >&2
+    exit 2
+fi
+if [[ ${#expected_templates[@]} -eq 0 ]]; then
+    printf 'Turn directory is missing required expected output family: template.*\n' >&2
+    exit 2
+fi
+
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/atlantis-replay.XXXXXX")
 work_dir=$(cd "$work_dir" && pwd -P)
 trap 'rm -rf "$work_dir"' EXIT

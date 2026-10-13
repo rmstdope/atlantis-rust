@@ -57,7 +57,7 @@ the idea can be reused to compare Rust and C++ `genrules` output.
    working directory and compares the expected outputs byte-for-byte, reporting the first differing
    file and its first diff hunk. The executable can be the C++ reference binary before the Rust
    engine exists. `crates/atlantis-engine/tests/replay_harness.rs` tests the runner with a fake
-   executable and checks the fixture inventory.
+   executable, while `fixtures/SHA256SUMS` pins the copied fixture inventory and bytes.
 3. New fixtures recorded per feature area with a patched reference build (RNG trace, `new` seed
    override), never hand-edited.
 4. `report.1` (GM report) covers every item, object and skill description at all levels, which makes

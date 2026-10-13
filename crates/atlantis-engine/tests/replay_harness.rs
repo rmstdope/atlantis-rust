@@ -1,3 +1,5 @@
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::ErrorKind;
 use std::os::unix::fs::PermissionsExt;
@@ -68,14 +70,21 @@ set -eu
 [ "$1" = run ]
 printf 'saved game\n' > game.out
 printf 'saved players\n' > players.out
-if [ "${REPLAY_TEST_MISMATCH:-0}" = 1 ]; then
-    printf 'report start\ncontext before\nactual line\ncontext after\nreport end\n' > report.1
-    printf 'changed template\n' > template.3
-else
-    printf 'report start\ncontext before\nexpected line\ncontext after\nreport end\n' > report.1
-    printf 'orders template\n' > template.3
+if [ "${REPLAY_TEST_OMIT_OUTPUT_FAMILY:-}" != report ]; then
+    if [ "${REPLAY_TEST_MISMATCH:-0}" = 1 ]; then
+        printf 'report start\ncontext before\nactual line\ncontext after\nreport end\n' > report.1
+    else
+        printf 'report start\ncontext before\nexpected line\ncontext after\nreport end\n' > report.1
+    fi
+    printf 'faction report\n' > report.3
 fi
-printf 'faction report\n' > report.3
+if [ "${REPLAY_TEST_OMIT_OUTPUT_FAMILY:-}" != template ]; then
+    if [ "${REPLAY_TEST_MISMATCH:-0}" = 1 ]; then
+        printf 'changed template\n' > template.3
+    else
+        printf 'orders template\n' > template.3
+    fi
+fi
 printf 'times article\n' > times.42
 printf 'reference engine\n'
 "#,
@@ -98,6 +107,17 @@ fn run_harness(fixture: &Path, engine: &Path, mismatch: bool) -> Output {
         .arg(fixture)
         .arg(engine)
         .env("REPLAY_TEST_MISMATCH", if mismatch { "1" } else { "0" })
+        .output()
+        .expect("run replay harness")
+}
+
+fn run_harness_omitting_family(fixture: &Path, engine: &Path, family: &str) -> Output {
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/replay-turn.sh");
+    Command::new("bash")
+        .arg(script)
+        .arg(fixture)
+        .arg(engine)
+        .env("REPLAY_TEST_OMIT_OUTPUT_FAMILY", family)
         .output()
         .expect("run replay harness")
 }
@@ -152,6 +172,47 @@ fn replay_harness_reports_first_difference_with_line_context() {
 }
 
 #[test]
+fn replay_harness_rejects_missing_expected_output_families() {
+    for (filename_prefix, engine_family, expected_error) in [
+        (
+            "report.",
+            "report",
+            "missing required expected output family: report.*",
+        ),
+        (
+            "template.",
+            "template",
+            "missing required expected output family: template.*",
+        ),
+    ] {
+        let (_temp_dir, fixture, engine) = fixture_and_engine();
+        for entry in fs::read_dir(&fixture).expect("read fixture directory") {
+            let entry = entry.expect("read fixture file");
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with(filename_prefix)
+            {
+                fs::remove_file(entry.path()).expect("remove expected output file");
+            }
+        }
+
+        let output = run_harness_omitting_family(&fixture, &engine, engine_family);
+        let message = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        assert!(!output.status.success(), "harness passed: {message}");
+        assert!(
+            message.contains(expected_error),
+            "missing expected-family error: {message}"
+        );
+    }
+}
+
+#[test]
 fn replay_fixtures_contain_all_recorded_turns() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
 
@@ -199,5 +260,81 @@ fn replay_fixtures_contain_all_recorded_turns() {
                 );
             }
         }
+    }
+}
+
+#[test]
+fn replay_fixtures_match_sha256_manifest() {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let manifest =
+        fs::read_to_string(fixtures.join("SHA256SUMS")).expect("read fixture SHA-256 manifest");
+    let mut expected = BTreeMap::new();
+
+    for line in manifest.lines() {
+        let (digest, filename) = line
+            .split_once("  ")
+            .expect("manifest line has checksum and filename");
+        let filename = PathBuf::from(filename);
+        let filename_text = filename.to_string_lossy();
+        assert_eq!(digest.len(), 64, "invalid SHA-256 digest for {filename:?}");
+        assert!(
+            filename_text.starts_with("fixtures/standard/turn_")
+                || filename_text.starts_with("fixtures/neworigins/turn_"),
+            "unexpected file in fixture manifest: {filename:?}"
+        );
+        assert!(
+            expected
+                .insert(filename.clone(), digest.to_owned())
+                .is_none(),
+            "duplicate fixture manifest entry: {filename:?}"
+        );
+    }
+
+    let mut actual = BTreeSet::new();
+    for ruleset in ["standard", "neworigins"] {
+        let ruleset_dir = fixtures.join(ruleset);
+        for turn in fs::read_dir(&ruleset_dir).expect("read ruleset fixture directory") {
+            let turn = turn.expect("read fixture directory entry");
+            if !turn.file_type().expect("read fixture entry type").is_dir()
+                || !turn.file_name().to_string_lossy().starts_with("turn_")
+            {
+                continue;
+            }
+
+            for file in fs::read_dir(turn.path()).expect("read turn fixture directory") {
+                let file = file.expect("read turn fixture file");
+                let relative = PathBuf::from("fixtures")
+                    .join(ruleset)
+                    .join(turn.file_name())
+                    .join(file.file_name());
+                actual.insert(relative);
+            }
+        }
+    }
+
+    assert_eq!(
+        actual,
+        expected.keys().cloned().collect(),
+        "fixture file inventory differs from SHA-256 manifest"
+    );
+
+    for (filename, expected_digest) in expected {
+        let fixture_path = fixtures.join(
+            filename
+                .strip_prefix("fixtures")
+                .expect("manifest path starts with fixtures"),
+        );
+        let contents = fs::read(&fixture_path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", fixture_path.display()));
+        let actual_digest = Sha256::digest(contents)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(
+            actual_digest,
+            expected_digest,
+            "fixture bytes differ from manifest: {}",
+            fixture_path.display()
+        );
     }
 }
