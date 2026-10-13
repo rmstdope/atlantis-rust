@@ -53,8 +53,11 @@ the idea can be reused to compare Rust and C++ `genrules` output.
 ## What the replica reuses
 
 1. All 28 snapshot turns as byte-exact fixtures, copied to `fixtures/<ruleset>/turn_N`.
-2. The snapshot procedure itself, reimplemented as a Rust integration test, and runnable against the
-   C++ binary to prove the harness.
+2. `scripts/replay-turn.sh <turn-dir> <engine>` runs an executable's `run` command in an isolated
+   working directory and compares the expected outputs byte-for-byte, reporting the first differing
+   file and its first diff hunk. The executable can be the C++ reference binary before the Rust
+   engine exists. `crates/atlantis-engine/tests/replay_harness.rs` tests the runner with a fake
+   executable and checks the fixture inventory.
 3. New fixtures recorded per feature area with a patched reference build (RNG trace, `new` seed
    override), never hand-edited.
 4. `report.1` (GM report) covers every item, object and skill description at all levels, which makes
@@ -62,5 +65,10 @@ the idea can be reused to compare Rust and C++ `genrules` output.
 
 ## Porting notes
 
-Targets: `crates/atlantis-engine/tests/replay.rs` (fixture harness), `fixtures/`,
+Run one turn with `scripts/replay-turn.sh fixtures/standard/turn_0 /path/to/standard`; the runner
+passes `run` to the executable and supplies the turn's input files in its working directory.
+
+Targets: `scripts/replay-turn.sh` (per-turn external-binary replay),
+`crates/atlantis-engine/tests/replay_harness.rs` (runner regressions),
+`crates/atlantis-engine/tests/replay.rs` (future Rust API fixture replay), `fixtures/`,
 `tools/reference/` (build and record scripts), `scripts/gate-full.sh`.
