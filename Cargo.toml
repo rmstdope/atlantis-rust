@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "crates/atlantis-engine",
+    "crates/atlantis-cli",
+]
+resolver = "2"

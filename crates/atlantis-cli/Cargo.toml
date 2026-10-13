@@ -1,0 +1,11 @@
+[package]
+name = "atlantis-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "atlantis"
+path = "src/main.rs"
+
+[dependencies]
+atlantis-engine = { path = "../atlantis-engine" }
