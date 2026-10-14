@@ -4461,7 +4461,7 @@ mod tests {
             &mut check_game,
             ruleset.game_defs(),
             b"#atlantis 7 none\nunit 10\n\
-              buy 0 wood\nbuy 1\nsell\nsell 1\n#end\n",
+              buy\nbuy 0 wood\nbuy 1\nsell\nsell 0 iron\nsell 1\n#end\n",
             OrderParseMode::Check,
         )
         .unwrap();
@@ -4469,7 +4469,9 @@ mod tests {
             check.errors,
             [
                 "BUY: Number to buy not given.",
+                "BUY: Number to buy not given.",
                 "BUY: Item not given.",
+                "SELL: Number to sell not given.",
                 "SELL: Number to sell not given.",
                 "SELL: Item not given."
             ]
@@ -4486,6 +4488,44 @@ mod tests {
             .orders
             .sell_orders
             .is_empty());
+
+        let (mut turn_game, turn_faction, _, turn_unit) = game_with_unit();
+        parse_order_file(
+            &mut turn_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\n\
+              buy\nbuy 0 wood\nbuy 1\nsell\nsell 0 iron\nsell 1\n\
+              buy 3 fake\nsell 2 fake\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            turn_game.faction(turn_faction).unwrap().errors,
+            [
+                "Unit (10): BUY: Number to buy not given.",
+                "Unit (10): BUY: Number to buy not given.",
+                "Unit (10): BUY: Item not given.",
+                "Unit (10): SELL: Number to sell not given.",
+                "Unit (10): SELL: Number to sell not given.",
+                "Unit (10): SELL: Item not given."
+            ]
+        );
+        assert_eq!(
+            turn_game.unit(turn_unit).unwrap().orders.buy_orders,
+            [BuyOrder {
+                item: -1,
+                num: 3,
+                ..BuyOrder::default()
+            }]
+        );
+        assert_eq!(
+            turn_game.unit(turn_unit).unwrap().orders.sell_orders,
+            [SellOrder {
+                item: -1,
+                num: 2,
+                ..SellOrder::default()
+            }]
+        );
     }
 
     #[test]
@@ -4749,7 +4789,13 @@ mod tests {
             })
             .and_then(|item| item.abbreviation.as_deref())
             .unwrap();
-        let mut check_game = game_with_unit().0;
+        let (mut check_game, check_faction, _, check_unit) = game_with_unit();
+        check_game.faction_mut(check_faction).unwrap().unclaimed = 50;
+        check_game
+            .unit_mut(check_unit)
+            .unwrap()
+            .items
+            .set_num(ItemId::Silver, 10);
         let input = format!(
             "#atlantis 7 none\nunit 10\n\
              exchange\nexchange 30\nexchange 30 1\n\
@@ -4759,7 +4805,7 @@ mod tests {
              transport 31 all wood except\ntransport 31 all wood except 0\n\
              transport 31 all fake\ndistribute 32 all fake\n\
              distribute 32 all wood except\ndistribute 32 all wood except 0\n\
-             join 0\nclaim\n#end\n"
+             join 0\nclaim\nclaim 20\n#end\n"
         );
         let check = parse_order_file(
             &mut check_game,
@@ -4790,6 +4836,19 @@ mod tests {
                 "JOIN: No target given.",
                 "CLAIM: No amount given."
             ]
+        );
+        let faction = check_game.faction(check_faction).unwrap();
+        assert_eq!(faction.unclaimed, 50);
+        assert_eq!(faction.items.get_num(ItemId::Silver), 0);
+        assert!(faction.events.is_empty());
+        assert!(faction.item_shows.is_empty());
+        assert_eq!(
+            check_game
+                .unit(check_unit)
+                .unwrap()
+                .items
+                .get_num(ItemId::Silver),
+            10
         );
     }
 
@@ -5025,6 +5084,38 @@ mod tests {
                 ..ProduceOrder::default()
             }))
         );
+
+        let (mut turn_game, turn_faction, _, turn_unit) = game_with_unit();
+        let saved_month_order = OrderData::Move(crate::orders::MoveOrder::default());
+        turn_game.unit_mut(turn_unit).unwrap().orders.month_orders =
+            Some(saved_month_order.clone());
+        turn_game.unit_mut(turn_unit).unwrap().taxing = 5;
+        let mut check_defs = *standard.game_defs();
+        check_defs.tax_pillage_month_long = 1;
+        let mut parser = super::Parser::new(
+            &mut turn_game,
+            &check_defs,
+            &standard_tables,
+            OrderParseMode::Check,
+        );
+        parser.faction_id = Some(turn_faction);
+        parser.unit_stack.push(turn_unit);
+        let mut cursor = 0;
+        let mut pending = std::collections::VecDeque::new();
+        for line in ["turn", "tax", "pillage", "endturn"] {
+            parser
+                .parse_line(line.to_owned(), &[], &mut cursor, &mut pending)
+                .unwrap();
+        }
+        assert_eq!(
+            parser.result.errors,
+            ["PILLAGE: The unit is already taxing."]
+        );
+        let restored = parser.game.unit(turn_unit).unwrap();
+        assert_eq!(restored.orders.month_orders, Some(saved_month_order));
+        assert_eq!(restored.taxing, 5);
+        assert_eq!(restored.present_taxing, 0);
+        assert_eq!(restored.orders.in_turn_block, 0);
     }
 
     #[test]
@@ -5163,6 +5254,22 @@ mod tests {
             .parse_line(format!("build {ship_name}"), &[], &mut cursor, &mut pending)
             .unwrap();
         assert!(parser.result.errors.is_empty());
+
+        let (mut help_check_game, help_check_faction, _, help_check_unit) = game_with_unit();
+        let mut help_parser = super::Parser::new(
+            &mut help_check_game,
+            ruleset.game_defs(),
+            &tables,
+            OrderParseMode::Check,
+        );
+        help_parser.faction_id = Some(help_check_faction);
+        help_parser.unit_stack.push(help_check_unit);
+        let mut cursor = 0;
+        let mut pending = std::collections::VecDeque::new();
+        help_parser
+            .parse_line("build help 0".to_owned(), &[], &mut cursor, &mut pending)
+            .unwrap();
+        assert!(help_parser.result.errors.is_empty());
     }
 
     #[test]
