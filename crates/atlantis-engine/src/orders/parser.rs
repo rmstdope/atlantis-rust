@@ -1782,7 +1782,7 @@ mod tests {
         let result = parse_order_file(
             &mut game,
             ruleset.game_defs(),
-            b"#atlantis 7 none\nunit 10\nmove North n nOrThEaSt NE Southeast SE South s Southwest SW Northwest NW 12tail in out pause p\nmove 0 north\nmove northeast\nmove invalid south\n#end\n",
+            b"#atlantis 7 none\nunit 10\nmove North n nOrThEaSt NE Southeast SE South s Southwest SW Northwest NW 12tail in out pause p\nmove 0 north\nmove northeast\nmove invalid south\nmove -12 north\n#end\n",
             OrderParseMode::Turn,
         )
         .unwrap();
@@ -1818,6 +1818,7 @@ mod tests {
         assert_eq!(
             game.faction(faction_id).unwrap().errors,
             [
+                "Unit (10): MOVE: Warning, bad direction.",
                 "Unit (10): MOVE: Warning, bad direction.",
                 "Unit (10): MOVE: Warning, bad direction."
             ]
@@ -1856,7 +1857,7 @@ mod tests {
         parse_order_file(
             &mut sail_game,
             ruleset.game_defs(),
-            b"#atlantis 7 none\nunit 10\nsail north NE SE south SW northwest p in south\nsail out\nsail 12\nsail invalid\n#end\n",
+            b"#atlantis 7 none\nunit 10\nsail north NE SE south SW northwest p in south\nsail out\nsail 12\nsail invalid\nsail -12 north\n#end\n",
             OrderParseMode::Turn,
         )
         .unwrap();
@@ -1871,6 +1872,7 @@ mod tests {
         assert_eq!(
             sail_game.faction(sail_faction).unwrap().errors,
             [
+                "Unit (10): SAIL: Warning, bad direction.",
                 "Unit (10): SAIL: Warning, bad direction.",
                 "Unit (10): SAIL: Warning, bad direction.",
                 "Unit (10): SAIL: Warning, bad direction.",
