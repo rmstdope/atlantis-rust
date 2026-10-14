@@ -2601,7 +2601,7 @@ mod tests {
                 &mut random_gate_game,
                 ruleset.game_defs(),
                 &tables,
-                b"#atlantis 7 none\nunit 10\ncast GATE random level units 14\n#end\n",
+                b"#atlantis 7 none\nunit 10\ncast GATE random level units 14\ncast GATE random level units 15\n#end\n",
                 OrderParseMode::Turn,
             )
             .unwrap();
@@ -2616,7 +2616,7 @@ mod tests {
                     level: 2,
                     gate: -2,
                     units: vec![OrderUnitId {
-                        unitnum: 14,
+                        unitnum: 15,
                         alias: 0,
                         faction: 0,
                     }],
@@ -3016,10 +3016,23 @@ mod tests {
                         unit.orders.cast_orders.as_ref(),
                         Some(CastOrderData::Units(_))
                     )),
-                    ExpectedOrder::Transmutation => assert!(matches!(
-                        unit.orders.cast_orders.as_ref(),
-                        Some(CastOrderData::Transmute(_))
-                    )),
+                    ExpectedOrder::Transmutation => {
+                        let Some(CastOrderData::Transmute(order)) =
+                            unit.orders.cast_orders.as_ref()
+                        else {
+                            panic!("expected transmutation order for {ruleset_name}: {name}");
+                        };
+                        assert_eq!(order.level, 1, "{ruleset_name}: {name}");
+                        assert_eq!(
+                            order.item,
+                            tables
+                                .item_families
+                                .parse_enabled_item("mithril")
+                                .expect("mithril is enabled") as i32,
+                            "{ruleset_name}: {name}"
+                        );
+                        assert_eq!(order.number, -1, "{ruleset_name}: {name}");
+                    }
                     ExpectedOrder::NoHandler => {
                         assert!(unit.orders.cast_orders.as_ref().is_none());
                         assert!(unit.orders.teleport_orders.as_ref().is_none());
