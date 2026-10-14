@@ -823,6 +823,22 @@ impl<'a> Parser<'a> {
             Some(OrderVerb::Destroy) => self.parse_destroy_order(unit_id),
             Some(OrderVerb::Enter) => self.parse_enter_order(unit_id, line),
             Some(OrderVerb::Leave) => self.parse_leave_order(unit_id),
+            Some(OrderVerb::Buy) => self.parse_buy_sell_order(unit_id, line, true),
+            Some(OrderVerb::Sell) => self.parse_buy_sell_order(unit_id, line, false),
+            Some(OrderVerb::Produce) => self.parse_produce_order(unit_id, line),
+            Some(OrderVerb::Work) => self.parse_work_order(unit_id),
+            Some(OrderVerb::Entertain) => self.parse_entertain_order(unit_id),
+            Some(OrderVerb::Build) => self.parse_build_order(unit_id, line),
+            Some(OrderVerb::Give) => self.parse_give_order(unit_id, line, false),
+            Some(OrderVerb::Take) => self.parse_give_order(unit_id, line, true),
+            Some(OrderVerb::Withdraw) => self.parse_withdraw_order(unit_id, line),
+            Some(OrderVerb::Exchange) => self.parse_exchange_order(unit_id, line),
+            Some(OrderVerb::Transport) => self.parse_transport_order(unit_id, line, false),
+            Some(OrderVerb::Distribute) => self.parse_transport_order(unit_id, line, true),
+            Some(OrderVerb::Join) => self.parse_join_order(unit_id, line),
+            Some(OrderVerb::Claim) => self.parse_claim_order(unit_id, line),
+            Some(OrderVerb::Tax) => self.parse_tax_pillage_order(unit_id, false),
+            Some(OrderVerb::Pillage) => self.parse_tax_pillage_order(unit_id, true),
             _ => {}
         }
     }
@@ -1618,25 +1634,6 @@ impl<'a> Parser<'a> {
         self.clear_cast_orders(unit_id);
         if let Some(unit) = self.game.unit_mut(unit_id) {
             unit.orders.cast_orders = Some(order);
-        }
-        match verb {
-            Some(OrderVerb::Buy) => self.parse_buy_sell_order(unit_id, line, true),
-            Some(OrderVerb::Sell) => self.parse_buy_sell_order(unit_id, line, false),
-            Some(OrderVerb::Produce) => self.parse_produce_order(unit_id, line),
-            Some(OrderVerb::Work) => self.parse_work_order(unit_id),
-            Some(OrderVerb::Entertain) => self.parse_entertain_order(unit_id),
-            Some(OrderVerb::Build) => self.parse_build_order(unit_id, line),
-            Some(OrderVerb::Give) => self.parse_give_order(unit_id, line, false),
-            Some(OrderVerb::Take) => self.parse_give_order(unit_id, line, true),
-            Some(OrderVerb::Withdraw) => self.parse_withdraw_order(unit_id, line),
-            Some(OrderVerb::Exchange) => self.parse_exchange_order(unit_id, line),
-            Some(OrderVerb::Transport) => self.parse_transport_order(unit_id, line, false),
-            Some(OrderVerb::Distribute) => self.parse_transport_order(unit_id, line, true),
-            Some(OrderVerb::Join) => self.parse_join_order(unit_id, line),
-            Some(OrderVerb::Claim) => self.parse_claim_order(unit_id, line),
-            Some(OrderVerb::Tax) => self.parse_tax_pillage_order(unit_id, false),
-            Some(OrderVerb::Pillage) => self.parse_tax_pillage_order(unit_id, true),
-            _ => {}
         }
     }
 
@@ -4377,6 +4374,25 @@ mod tests {
             ]
         );
         assert!(game.unit(unit_id).unwrap().orders.month_orders.is_none());
+    }
+
+    #[test]
+    fn study_orders_remain_dispatched_with_trade_orders() {
+        let (mut game, _, _, unit_id) = game_with_unit();
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nstudy entertainment\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            &game.unit(unit_id).unwrap().orders.month_orders,
+            Some(OrderData::Study(_))
+        ));
     }
 
     #[test]
