@@ -279,7 +279,8 @@ fn replay_fixtures_match_sha256_manifest() {
         assert_eq!(digest.len(), 64, "invalid SHA-256 digest for {filename:?}");
         assert!(
             filename_text.starts_with("fixtures/standard/turn_")
-                || filename_text.starts_with("fixtures/neworigins/turn_"),
+                || filename_text.starts_with("fixtures/neworigins/turn_")
+                || filename_text.starts_with("fixtures/new-game/"),
             "unexpected file in fixture manifest: {filename:?}"
         );
         assert!(
@@ -310,6 +311,18 @@ fn replay_fixtures_match_sha256_manifest() {
                 actual.insert(relative);
             }
         }
+    }
+    let new_game_dir = fixtures.join("new-game");
+    for file in fs::read_dir(&new_game_dir).expect("read new-game fixture directory") {
+        let file = file.expect("read new-game fixture file");
+        assert!(
+            file.file_type()
+                .expect("read new-game fixture type")
+                .is_file(),
+            "unexpected directory in new-game fixture directory: {:?}",
+            file.file_name()
+        );
+        actual.insert(PathBuf::from("fixtures/new-game").join(file.file_name()));
     }
 
     assert_eq!(
