@@ -3096,9 +3096,10 @@ mod tests {
     use crate::model::{Faction, Game, Object, Region, Unit};
     use crate::orders::{
         BuildOrder, BuyOrder, CastIntOrder, CastOrder, CastOrderData, CastRegionOrder,
-        CastTransmuteOrder, CastUnitsOrder, ExchangeOrder, GiveOrder, JoinOrder, MoveDir, MoveOrder,
-        Order, OrderData, OrderUnitId, OrderVerb, ProduceOrder, SellOrder, TeleportOrder,
-        TransportOrder, TurnOrder, WithdrawOrder, MOVE_ENTER, MOVE_IN, MOVE_OUT, MOVE_PAUSE,
+        CastTransmuteOrder, CastUnitsOrder, ExchangeOrder, GiveOrder, JoinOrder, MoveDir,
+        MoveOrder, Order, OrderData, OrderUnitId, OrderVerb, ProduceOrder, SellOrder,
+        TeleportOrder, TransportOrder, TurnOrder, WithdrawOrder, MOVE_ENTER, MOVE_IN, MOVE_OUT,
+        MOVE_PAUSE,
     };
     use crate::ruleset::Ruleset;
     use crate::text::is_equal;
@@ -4984,8 +4985,12 @@ mod tests {
             .is_none());
 
         let (mut check_game, check_faction, _, check_unit) = game_with_unit();
-        let mut parser =
-            super::Parser::new(&mut check_game, standard.game_defs(), OrderParseMode::Check);
+        let mut parser = super::Parser::new(
+            &mut check_game,
+            standard.game_defs(),
+            &standard_tables,
+            OrderParseMode::Check,
+        );
         parser.faction_id = Some(check_faction);
         parser.unit_stack.push(check_unit);
         let mut cursor = 0;
@@ -5144,8 +5149,12 @@ mod tests {
             .unwrap()
             .to_owned();
         let (mut check_game, check_faction, _, check_unit) = game_with_unit();
-        let mut parser =
-            super::Parser::new(&mut check_game, ruleset.game_defs(), OrderParseMode::Check);
+        let mut parser = super::Parser::new(
+            &mut check_game,
+            ruleset.game_defs(),
+            &tables,
+            OrderParseMode::Check,
+        );
         parser.faction_id = Some(check_faction);
         parser.unit_stack.push(check_unit);
         let mut cursor = 0;
