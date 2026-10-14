@@ -698,7 +698,7 @@ fn adjust_skills(unit: &mut Unit, globals: &GameDefs, tables: &RulesetTables) {
     }
 }
 
-fn unit_men(unit: &Unit, tables: &RulesetTables) -> i32 {
+pub(crate) fn unit_men(unit: &Unit, tables: &RulesetTables) -> i32 {
     unit.items.entries().iter().fold(0_i32, |total, entry| {
         let is_man = tables
             .item_families
@@ -713,7 +713,7 @@ fn unit_men(unit: &Unit, tables: &RulesetTables) -> i32 {
     })
 }
 
-fn real_skill_level(unit: &Unit, skill_id: usize, tables: &RulesetTables) -> i32 {
+pub(crate) fn real_skill_level(unit: &Unit, skill_id: usize, tables: &RulesetTables) -> i32 {
     let men = unit_men(unit, tables);
     if men == 0 {
         return 0;
