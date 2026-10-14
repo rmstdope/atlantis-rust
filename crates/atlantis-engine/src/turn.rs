@@ -149,6 +149,7 @@ fn is_npc(faction: &Faction) -> bool {
     })
 }
 
+/// C++: `unit.cpp` `Unit::Taxers`; preserves its `numMelee` count under `TAX_USABLE_WEAPON`.
 fn taxers(unit: &Unit, ruleset: &dyn Ruleset, tables: &RulesetTables) -> i32 {
     let tax_flags = ruleset.game_defs().who_can_tax;
     let men = unit_men(unit, tables);
@@ -621,7 +622,7 @@ mod tests {
     use crate::defs::{
         skills::lookup_skill,
         terrains::{R_NEXUS, R_PLAIN},
-        ItemId, ItemTypeFlags,
+        ItemId, ItemTypeFlags, WeaponFlags,
     };
     use crate::model::{
         Faction, FactionActivity, FactionActivityRecord, Game, GuardMode, Item, Object, Region,
@@ -629,7 +630,36 @@ mod tests {
     };
     use crate::orders::{AttackOrder, IdleOrder, OrderData};
     use crate::rng::Rng;
-    use crate::ruleset::Ruleset;
+    use crate::ruleset::{FactionLimits, Ruleset};
+
+    struct NoDefaultWorkRuleset;
+
+    static NO_DEFAULT_WORK_DEFS: std::sync::OnceLock<crate::defs::GameDefs> =
+        std::sync::OnceLock::new();
+
+    impl Ruleset for NoDefaultWorkRuleset {
+        fn game_defs(&self) -> &'static crate::defs::GameDefs {
+            NO_DEFAULT_WORK_DEFS.get_or_init(|| {
+                let mut defs = *<dyn Ruleset>::from_name("neworigins")
+                    .expect("NewOrigins ruleset")
+                    .game_defs();
+                defs.default_work_order = 0;
+                defs
+            })
+        }
+
+        fn faction_limits(&self) -> &'static FactionLimits {
+            <dyn Ruleset>::from_name("neworigins")
+                .expect("NewOrigins ruleset")
+                .faction_limits()
+        }
+
+        fn faction_types(&self) -> &'static [&'static str] {
+            <dyn Ruleset>::from_name("neworigins")
+                .expect("NewOrigins ruleset")
+                .faction_types()
+        }
+    }
 
     #[test]
     fn pre_process_default_orders_resets_factions_and_assigns_unit_type_defaults() {
@@ -925,7 +955,19 @@ mod tests {
     #[test]
     fn default_work_orders_match_cpp_autotax_and_work_rules() {
         let ruleset = <dyn Ruleset>::from_name("neworigins").expect("NewOrigins ruleset");
-        let tables = ruleset.tables();
+        let mut tables = ruleset.tables();
+        let sword_weapon = tables
+            .item_families
+            .weapons
+            .iter_mut()
+            .find(|weapon| {
+                weapon
+                    .abbreviation
+                    .as_deref()
+                    .is_some_and(|abbreviation| crate::text::is_equal(abbreviation, "SWOR"))
+            })
+            .expect("sword weapon definition");
+        sword_weapon.flags |= WeaponFlags::NEEDSKILL;
         let mut game = Game::default();
         let mut region = Region::default();
         region.terrain_type = Some(R_PLAIN);
@@ -970,6 +1012,24 @@ mod tests {
         let mut taxed = Unit::new(44, Some(player_id), 0, 0);
         taxed.taxing = 1;
         let taxed_id = game.add_unit(object_id, taxed).expect("taxed unit");
+
+        let mut unskilled_swordsman = Unit::new(47, Some(player_id), 0, 0);
+        unskilled_swordsman.flags |= 0x0004;
+        unskilled_swordsman.items.push(Item {
+            item_type: ItemId::Leaders,
+            num: 1,
+            selling: 0,
+            checked: false,
+        });
+        unskilled_swordsman.items.push(Item {
+            item_type: ItemId::Sword,
+            num: 1,
+            selling: 0,
+            checked: false,
+        });
+        let unskilled_swordsman_id = game
+            .add_unit(object_id, unskilled_swordsman)
+            .expect("unskilled swordsman");
 
         let npc_object = game
             .add_object(region_id, Object::default())
@@ -1020,6 +1080,21 @@ mod tests {
             game.unit(taxed_id).expect("taxed unit").orders.month_orders,
             None
         );
+        let unskilled_swordsman = game
+            .unit(unskilled_swordsman_id)
+            .expect("unskilled swordsman");
+        let sword = &tables.item_families.items[ItemId::Sword.index()];
+        let sword_weapon = tables
+            .item_families
+            .find_weapon(sword.abbreviation.as_deref().expect("sword abbreviation"))
+            .expect("sword weapon definition");
+        assert_ne!(sword_weapon.flags & WeaponFlags::NEEDSKILL, 0);
+        assert_eq!(
+            super::unit_skill_level(unskilled_swordsman, "COMB", &tables),
+            0
+        );
+        assert_eq!(unskilled_swordsman.taxing, 3);
+        assert_eq!(unskilled_swordsman.orders.month_orders, None);
         let Some(OrderData::Produce(order)) = &game
             .unit(worker_without_taxers_id)
             .expect("worker")
@@ -1030,6 +1105,31 @@ mod tests {
         };
         assert_eq!(order.order.quiet, 1);
         assert_eq!(order.item, ItemId::Silver.index() as i32);
+
+        let disabled_ruleset = NoDefaultWorkRuleset;
+        let mut disabled_game = Game::default();
+        let mut disabled_region = Region::default();
+        disabled_region.terrain_type = Some(R_PLAIN);
+        let disabled_region_id = disabled_game.add_region(disabled_region);
+        let disabled_faction =
+            disabled_game.add_faction(Faction::new(3, disabled_ruleset.faction_types()));
+        let disabled_object = disabled_game
+            .add_object(disabled_region_id, Object::default())
+            .expect("disabled-work object");
+        let disabled_unit = disabled_game
+            .add_unit(disabled_object, Unit::new(48, Some(disabled_faction), 0, 0))
+            .expect("disabled-work unit");
+
+        apply_default_work_orders(&mut disabled_game, &disabled_ruleset, &tables);
+
+        assert_eq!(
+            disabled_game
+                .unit(disabled_unit)
+                .expect("disabled-work unit")
+                .orders
+                .month_orders,
+            None
+        );
     }
 
     #[cfg(feature = "rng-trace")]
