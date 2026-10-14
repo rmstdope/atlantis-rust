@@ -94,7 +94,7 @@ impl fmt::Display for SaveError {
                 "invalid integer {token:?} for {field} at byte {offset}"
             ),
             Self::InvalidCount { field, count } => {
-                write!(formatter, "invalid negative count {count} for {field}")
+                write!(formatter, "invalid count {count} for {field}")
             }
             Self::InvalidValue { field, value } => {
                 write!(formatter, "invalid value {value:?} for {field}")
@@ -473,7 +473,7 @@ fn read_regions(
     }
     game.number_of_gates = reader.get_int("region gate count")?;
 
-    let mut region_ids = Vec::with_capacity(region_count);
+    let mut region_ids = Vec::new();
     for _ in 0..region_count {
         let (region, object_count) = read_region(reader, tables, defs)?;
         let region_id = game.add_region(region);
@@ -608,7 +608,7 @@ fn read_productions(
     tables: &RulesetTables,
     count: usize,
 ) -> Result<Vec<Production>, SaveError> {
-    let mut productions = Vec::with_capacity(count);
+    let mut productions = Vec::new();
     for _ in 0..count {
         let item_symbol = reader.get_str("production item")?;
         let item_type = tables
@@ -651,7 +651,7 @@ fn read_markets(
     tables: &RulesetTables,
     count: usize,
 ) -> Result<Vec<Market>, SaveError> {
-    let mut markets = Vec::with_capacity(count);
+    let mut markets = Vec::new();
     for _ in 0..count {
         let raw_type = reader.get_int("market type")?;
         let market_type = match raw_type {
@@ -886,7 +886,7 @@ fn lookup_item_number(tables: &RulesetTables, symbol: &str) -> i32 {
 /// C++: `quests.cpp` `QuestList::ReadQuests`; destinations use ordered set semantics.
 fn read_quests(reader: &mut Reader<'_>, tables: &RulesetTables) -> Result<Vec<Quest>, SaveError> {
     let count = reader.get_count("quest count")?;
-    let mut quests = Vec::with_capacity(count);
+    let mut quests = Vec::new();
     for _ in 0..count {
         let mut quest = Quest {
             quest_type: reader.get_int("quest type")?,
@@ -979,12 +979,14 @@ fn lookup_object_number(tables: &RulesetTables, symbol: &str) -> i32 {
 
 struct Reader<'a> {
     input: TextInput<Cursor<&'a [u8]>>,
+    input_len: usize,
 }
 
 impl<'a> Reader<'a> {
     fn new(input: &'a str) -> Self {
         Self {
             input: TextInput::new(Cursor::new(input.as_bytes())),
+            input_len: input.len(),
         }
     }
 
@@ -1004,8 +1006,18 @@ impl<'a> Reader<'a> {
     }
 
     fn get_count(&mut self, field: &'static str) -> Result<usize, SaveError> {
-        let count = self.get_int(field)?;
-        usize::try_from(count).map_err(|_| SaveError::InvalidCount { field, count })
+        let raw_count = self.get_int(field)?;
+        let count = usize::try_from(raw_count).map_err(|_| SaveError::InvalidCount {
+            field,
+            count: raw_count,
+        })?;
+        if count > self.remaining_bytes(field)? {
+            return Err(SaveError::InvalidCount {
+                field,
+                count: raw_count,
+            });
+        }
+        Ok(count)
     }
 
     fn get_str(&mut self, field: &'static str) -> Result<String, SaveError> {
@@ -1028,17 +1040,22 @@ impl<'a> Reader<'a> {
                 message: error.to_string(),
             })
     }
+
+    fn remaining_bytes(&mut self, field: &'static str) -> Result<usize, SaveError> {
+        Ok(self.input_len.saturating_sub(self.offset(field)?))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_guard_mode, read_header, read_item_list, read_quests, read_skill_list, Reader,
-        SaveError,
+        normalize_guard_mode, read_factions, read_header, read_item_list, read_markets,
+        read_productions, read_quests, read_regions, read_skill_list, Reader, SaveError,
     };
     use crate::defs::{ItemFlags, ItemId};
-    use crate::model::GuardMode;
+    use crate::model::{Faction, Game, GuardMode, MarketType};
     use crate::ruleset::Ruleset;
+    use std::collections::BTreeMap;
 
     #[test]
     fn header_reading_selects_rulesets_and_applies_version_gates() {
@@ -1086,17 +1103,50 @@ mod tests {
             .find(|item| item.flags & ItemFlags::DISABLED != 0)
             .and_then(|item| item.abbreviation.as_deref())
             .expect("disabled item with an abbreviation");
-        let item_input = format!("3\n5 SILV\n0 WOOD\n1 {disabled_abbreviation}\n");
+        let item_input = format!("3\n1 WOOD\n5 SILV\n1 {disabled_abbreviation}\n");
         let mut reader = Reader::new(&item_input);
         let items = read_item_list(&mut reader, &tables).expect("read items");
-        assert_eq!(items.entries().len(), 1);
-        assert_eq!(items.entries()[0].item_type, ItemId::Silver);
-        assert_eq!(items.entries()[0].num, 5);
+        assert_eq!(
+            items
+                .entries()
+                .iter()
+                .map(|item| (item.item_type, item.num))
+                .collect::<Vec<_>>(),
+            [(ItemId::Wood, 1), (ItemId::Silver, 5)]
+        );
 
-        let mut reader = Reader::new("2\nMINI 0\nMINI 10\n");
-        let skills = read_skill_list(&mut reader, &tables, false).expect("read skills");
-        assert_eq!(skills.entries().len(), 1);
-        assert_eq!(skills.entries()[0].days, 10);
+        let abbreviations = tables
+            .skills
+            .skills
+            .iter()
+            .filter_map(|skill| skill.abbreviation)
+            .take(2)
+            .collect::<Vec<_>>();
+        let skill_input = format!(
+            "3\n{} 0 0\n{} 10 4\n{} 0 7\n",
+            abbreviations[1], abbreviations[0], abbreviations[1]
+        );
+        let mut reader = Reader::new(&skill_input);
+        let skills = read_skill_list(&mut reader, &tables, true).expect("read skills");
+        assert_eq!(
+            skills
+                .entries()
+                .iter()
+                .map(|skill| (skill.skill_type, skill.days, skill.exp))
+                .collect::<Vec<_>>(),
+            [
+                (
+                    super::lookup_skill(&tables.skills.skills, abbreviations[0]).unwrap(),
+                    10,
+                    4
+                ),
+                (
+                    super::lookup_skill(&tables.skills.skills, abbreviations[1]).unwrap(),
+                    0,
+                    7
+                )
+            ]
+        );
     }
 
     #[test]
@@ -1153,5 +1203,236 @@ mod tests {
     fn guard_advance_and_set_values_are_normalized_when_loaded() {
         assert_eq!(normalize_guard_mode(4), Ok(GuardMode::None));
         assert_eq!(normalize_guard_mode(3), Ok(GuardMode::Guard));
+    }
+
+    #[test]
+    fn counts_larger_than_remaining_input_are_rejected() {
+        let mut reader = Reader::new("2147483647\n");
+        assert!(matches!(
+            reader.get_count("test count"),
+            Err(SaveError::InvalidCount {
+                field: "test count",
+                count: i32::MAX
+            })
+        ));
+    }
+
+    #[test]
+    fn factions_preserve_file_order_even_when_numbers_are_unsorted() {
+        let ruleset = <dyn Ruleset>::from_name("Wyreth").expect("standard ruleset");
+        let tables = ruleset.tables();
+        let mut input = String::new();
+        append_faction(&mut input, 99, ruleset.faction_types().len());
+        append_faction(&mut input, 3, ruleset.faction_types().len());
+        let mut reader = Reader::new(&input);
+        let mut game = Game::default();
+        read_factions(
+            &mut reader,
+            &mut game,
+            &tables,
+            false,
+            ruleset.faction_types(),
+            2,
+        )
+        .expect("read factions");
+        assert_eq!(
+            game.faction_ids()
+                .iter()
+                .map(|id| game.faction(*id).unwrap().num)
+                .collect::<Vec<_>>(),
+            [99, 3]
+        );
+    }
+
+    #[test]
+    fn regions_objects_units_and_neighbors_keep_file_order() {
+        let ruleset = <dyn Ruleset>::from_name("Wyreth").expect("standard ruleset");
+        let tables = ruleset.tables();
+        let defs = ruleset.game_defs();
+        let mut game = Game::default();
+        let faction_id = game.add_faction(Faction::new(1, ruleset.faction_types()));
+        let factions = BTreeMap::from([(1, faction_id)]);
+        let mut input = String::from("2\n1\n2\n2\nnone\n1\n14\n");
+        append_region(
+            &mut input,
+            TestRegion {
+                name: "First",
+                number: 50,
+                x: 0,
+                y: 0,
+                gate: 4,
+                gate_month: Some(11),
+                object_count: 2,
+            },
+        );
+        append_object(
+            &mut input,
+            9,
+            tables.objects[crate::defs::objects::O_DUMMY].name,
+            "First object",
+            &[("Later", 50), ("Earlier", 3)],
+        );
+        append_object(
+            &mut input,
+            2,
+            tables.objects[crate::defs::objects::O_DUMMY].name,
+            "Second object",
+            &[],
+        );
+        append_region(
+            &mut input,
+            TestRegion {
+                name: "Second",
+                number: 20,
+                x: 1,
+                y: 1,
+                gate: 0,
+                gate_month: None,
+                object_count: 0,
+            },
+        );
+        input.push_str("Neighbors\n20\n-1\n-1\n-1\n-1\n-1\n50\n-1\n-1\n-1\n-1\n-1\n");
+
+        let mut reader = Reader::new(&input);
+        read_regions(&mut reader, &mut game, &tables, defs, &factions).expect("read regions");
+
+        let region_ids = game.region_ids();
+        assert_eq!(
+            region_ids
+                .iter()
+                .map(|id| game.region(*id).unwrap().num)
+                .collect::<Vec<_>>(),
+            [50, 20]
+        );
+        let first = game.region(region_ids[0]).unwrap();
+        let second = game.region(region_ids[1]).unwrap();
+        assert_eq!((first.gate, first.gate_month), (4, 11));
+        assert_eq!((second.gate, second.gate_month), (0, 0));
+        assert_eq!(first.neighbors[0], Some(region_ids[1]));
+        assert_eq!(second.neighbors[0], Some(region_ids[0]));
+        assert_eq!(first.object_ids().len(), 2);
+        assert_eq!(
+            first
+                .object_ids()
+                .iter()
+                .map(|id| game.object(*id).unwrap().num)
+                .collect::<Vec<_>>(),
+            [9, 2]
+        );
+
+        let object = game.object(first.object_ids()[0]).unwrap();
+        assert_eq!(object.num, 9);
+        assert_eq!(
+            object
+                .unit_ids()
+                .iter()
+                .map(|id| game.unit(*id).unwrap().num)
+                .collect::<Vec<_>>(),
+            [50, 3]
+        );
+    }
+
+    #[test]
+    fn productions_and_markets_keep_file_order_and_conditional_silver_skill() {
+        let ruleset = <dyn Ruleset>::from_name("Wyreth").expect("standard ruleset");
+        let tables = ruleset.tables();
+        let mut reader = Reader::new("SILV\n3\n2\nMINI\n7\nWOOD\n4\n5\n8\n");
+        let productions = read_productions(&mut reader, &tables, 2).expect("read productions");
+        assert_eq!(productions.len(), 2);
+        assert_eq!(
+            (
+                productions[0].item_type,
+                productions[0].amount,
+                productions[0].base_amount,
+                productions[0].skill,
+                productions[0].productivity
+            ),
+            (
+                ItemId::Silver as i32,
+                3,
+                2,
+                super::lookup_skill(&tables.skills.skills, "MINI").unwrap() as i32,
+                7
+            )
+        );
+        assert_eq!(
+            (
+                productions[1].item_type,
+                productions[1].amount,
+                productions[1].base_amount,
+                productions[1].productivity
+            ),
+            (ItemId::Wood as i32, 4, 5, 8)
+        );
+
+        let mut reader =
+            Reader::new("1\nWOOD\n8\n2\n0\n0\n0\n0\n0\n0\nSILV\n9\n3\n4\n5\n6\n7\n8\n");
+        let markets = read_markets(&mut reader, &tables, 2).expect("read markets");
+        assert_eq!(markets[0].market_type, MarketType::Sell);
+        assert_eq!(markets[0].item, ItemId::Wood as i32);
+        assert_eq!(markets[1].market_type, MarketType::Buy);
+        assert_eq!(markets[1].item, ItemId::Silver as i32);
+        assert_eq!((markets[0].price, markets[1].price), (8, 9));
+    }
+
+    fn append_faction(input: &mut String, number: i32, faction_type_count: usize) {
+        input.push_str(&format!("{number}\n"));
+        for _ in 0..faction_type_count {
+            input.push_str("1\n");
+        }
+        input.push_str("0\n0\n0\nFaction\naddress\npassword\n1\n0\n2\n0\n0\n2\n0\n");
+    }
+
+    struct TestRegion<'a> {
+        name: &'a str,
+        number: i32,
+        x: i32,
+        y: i32,
+        gate: i32,
+        gate_month: Option<i32>,
+        object_count: usize,
+    }
+
+    fn append_region(input: &mut String, region: TestRegion<'_>) {
+        input.push_str(&format!(
+            "{}\n{}\nNO_TERRAIN\n1\n{}\n",
+            region.name, region.number, region.gate
+        ));
+        if region.gate > 0 {
+            input.push_str(&format!(
+                "{}\n",
+                region.gate_month.expect("gated region has a month")
+            ));
+        }
+        input.push_str("NO_RACE\n");
+        for _ in 0..14 {
+            input.push_str("0\n");
+        }
+        input.push_str(&format!(
+            "{}\n{}\n0\n0\n0\n0\n{}\n",
+            region.x, region.y, region.object_count
+        ));
+    }
+
+    fn append_object(
+        input: &mut String,
+        number: i32,
+        object_type: &str,
+        name: &str,
+        units: &[(&str, i32)],
+    ) {
+        input.push_str(&format!(
+            "{number}\n{object_type}\n0\n{name}\nnone\n0\n12\n0\n{}\n",
+            units.len()
+        ));
+        for (unit_name, unit_number) in units {
+            input.push_str(&format!(
+                "{unit_name}\nnone\n{unit_number}\n0\n1\n0\n0\n0\nNO_ITEM\n"
+            ));
+            for _ in 0..4 {
+                input.push_str("NO_ITEM\nNO_ITEM\n");
+            }
+            input.push_str("0\n0\n0\nNO_SKILL\n0\n0\n0\n");
+        }
     }
 }
