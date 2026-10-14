@@ -155,6 +155,7 @@ struct Parser<'a> {
     result: OrderParseResult,
     faction_id: Option<FactionId>,
     unit_stack: Vec<UnitId>,
+    check_unit_states: Vec<(UnitId, i32, i32)>,
     indent: i32,
     check_show_count: i32,
 }
@@ -174,6 +175,7 @@ impl<'a> Parser<'a> {
             result: OrderParseResult::default(),
             faction_id: None,
             unit_stack: Vec::new(),
+            check_unit_states: Vec::new(),
             indent: 0,
             check_show_count: 0,
         }
@@ -331,6 +333,9 @@ impl<'a> Parser<'a> {
     }
 
     fn atlantis(&mut self, line: &mut String) -> Result<(), OrderParseError> {
+        if self.mode == OrderParseMode::Check {
+            self.check_show_count = 0;
+        }
         if self.faction_id.is_some() {
             self.record_error(self.faction_id, None, "No #END statement given.");
         }
@@ -440,6 +445,17 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(unit_id) = self.current_unit() {
+            if self.mode == OrderParseMode::Check
+                && !self
+                    .check_unit_states
+                    .iter()
+                    .any(|(saved_id, _, _)| *saved_id == unit_id)
+            {
+                if let Some(unit) = self.game.unit(unit_id) {
+                    self.check_unit_states
+                        .push((unit_id, unit.reveal, unit.taxing));
+                }
+            }
             if let Some(unit) = self.game.unit_mut(unit_id) {
                 if self.mode == OrderParseMode::Check {
                     unit.orders.month_orders = None;
@@ -1799,8 +1815,10 @@ impl<'a> Parser<'a> {
                 };
                 match reveal {
                     Some(reveal) => {
-                        if let Some(unit) = self.game.unit_mut(unit_id) {
-                            unit.reveal = reveal;
+                        if self.mode == OrderParseMode::Turn {
+                            if let Some(unit) = self.game.unit_mut(unit_id) {
+                                unit.reveal = reveal;
+                            }
                         }
                     }
                     None => self.record_unit_error(unit_id, "REVEAL: Invalid value."),
@@ -1913,7 +1931,7 @@ impl<'a> Parser<'a> {
                     );
                 }
                 if let Some(unit) = self.game.unit_mut(unit_id) {
-                    if self.defs.tax_pillage_month_long != 0 {
+                    if self.mode == OrderParseMode::Turn && self.defs.tax_pillage_month_long != 0 {
                         unit.taxing = 0;
                     }
                     unit.orders.month_orders = Some(OrderData::Idle(IdleOrder::default()));
@@ -4224,8 +4242,17 @@ impl<'a> Parser<'a> {
                 self.record_unit_error(unit_id, "FORM: without END.");
             }
             if self.mode == OrderParseMode::Check {
+                let saved_state = self
+                    .check_unit_states
+                    .iter()
+                    .find(|(saved_id, _, _)| *saved_id == unit_id)
+                    .copied();
                 if let Some(unit) = self.game.unit_mut(unit_id) {
                     unit.clear_orders();
+                    if let Some((_, reveal, taxing)) = saved_state {
+                        unit.reveal = reveal;
+                        unit.taxing = taxing;
+                    }
                 }
             }
         }
@@ -6244,6 +6271,35 @@ mod tests {
     }
 
     #[test]
+    fn check_mode_reveal_and_idle_preserve_existing_unit_state() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let tables = ruleset.tables();
+        let mut defs = *ruleset.game_defs();
+        defs.tax_pillage_month_long = 1;
+        let (mut game, _, _, unit_id) = game_with_unit();
+        {
+            let unit = game.unit_mut(unit_id).unwrap();
+            unit.reveal = 1;
+            unit.taxing = 5;
+        }
+
+        let result = parse_order_file_with_tables(
+            &mut game,
+            &defs,
+            &tables,
+            b"#atlantis 7 none\nunit 10\nreveal faction\nidle\n#end\n",
+            OrderParseMode::Check,
+        )
+        .unwrap();
+
+        let unit = game.unit(unit_id).unwrap();
+        assert_eq!(unit.reveal, 1);
+        assert_eq!(unit.taxing, 5);
+        assert!(unit.orders.month_orders.is_none());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
     fn study_orders_remain_dispatched_with_trade_orders() {
         let (mut game, _, _, unit_id) = game_with_unit();
         let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
@@ -7686,6 +7742,27 @@ mod tests {
         assert_eq!(game.faction(removed_faction_id).unwrap().attitudes.len(), 0);
         assert_eq!(game.faction(other_faction_id).unwrap().num, 8);
         assert_eq!(game.unit(unit_id).unwrap().num, 10);
+    }
+
+    #[test]
+    fn check_mode_show_cap_resets_for_each_faction_block() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let (mut game, _, _, _) = game_with_unit();
+        let show_orders = "show skill COMB 1\n".repeat(101);
+        let orders = format!(
+            "#atlantis 7 none\nunit 10\n{show_orders}#end\n\
+             #atlantis 7 none\nunit 10\nshow skill COMB 1\n#end\n"
+        );
+
+        let result = parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            orders.as_bytes(),
+            OrderParseMode::Check,
+        )
+        .unwrap();
+
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
     }
 
     #[test]
