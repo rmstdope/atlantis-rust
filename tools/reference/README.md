@@ -88,3 +88,12 @@ step. The Rust replay harness can then verify the recorded turn when it is avail
 records the resulting faction/unit state and the complete seeded RNG trace under
 `fixtures/new-game/`, then updates `fixtures/SHA256SUMS`. These snapshots are generated from the
 C++ reference; do not edit them by hand or regenerate them from Rust.
+
+## Recording classic-world terrain statistics
+
+`record-world-generation.sh` builds the patched reference and generates 50 classic 64×64 surface
+worlds for each ruleset, using seeds 1 through 50. It records terrain counts in
+`fixtures/world-generation/classic-terrain-counts.json`, plus seed-1 Nexus and per-region surface
+`FinalSetup` state in `fixtures/world-generation/classic-nexus-final-setup.json` and
+`fixtures/world-generation/classic-surface-final-setup.json`. It then updates
+`fixtures/SHA256SUMS`. These fixtures must only be created or refreshed by this C++ recorder.

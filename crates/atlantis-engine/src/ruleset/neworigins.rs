@@ -16,7 +16,7 @@ use crate::defs::{
 };
 use crate::version::AtlVersion;
 
-use super::{FactionLimits, Ruleset, StartingFactionSetup};
+use super::{FactionLimits, Ruleset, StartingFactionSetup, WorldNameStyle};
 
 pub(super) struct NewOrigins;
 pub(super) static NEW_ORIGINS: NewOrigins = NewOrigins;
@@ -228,6 +228,48 @@ impl Ruleset for NewOrigins {
             set_flags: 0x0001,
             clear_flags: 0x0002 | 0x0008 | 0x0010,
         }
+    }
+
+    fn surface_terrain_from_roll(
+        &self,
+        latitude: i32,
+        roll: i32,
+    ) -> crate::defs::terrains::TerrainId {
+        use crate::defs::terrains::{
+            R_DESERT, R_FOREST, R_JUNGLE, R_MOUNTAIN, R_PLAIN, R_SWAMP, R_TUNDRA,
+        };
+
+        match latitude {
+            0 if roll < 32 => R_TUNDRA,
+            0 if roll < 40 => R_MOUNTAIN,
+            0 if roll < 48 => R_FOREST,
+            0 => R_PLAIN,
+            1 if roll < 8 => R_TUNDRA,
+            1 if roll < 24 => R_PLAIN,
+            1 if roll < 40 => R_FOREST,
+            1 if roll < 48 => R_MOUNTAIN,
+            1 => R_SWAMP,
+            2 if roll < 16 => R_PLAIN,
+            2 if roll < 28 => R_FOREST,
+            2 if roll < 36 => R_MOUNTAIN,
+            2 if roll < 44 => R_SWAMP,
+            2 if roll < 52 => R_JUNGLE,
+            2 => R_DESERT,
+            3 if roll < 16 => R_PLAIN,
+            3 if roll < 24 => R_MOUNTAIN,
+            3 if roll < 36 => R_SWAMP,
+            3 if roll < 48 => R_JUNGLE,
+            3 => R_DESERT,
+            _ => crate::defs::terrains::R_OCEAN,
+        }
+    }
+
+    fn world_name_style(&self) -> WorldNameStyle {
+        WorldNameStyle::NewOrigins
+    }
+
+    fn unnamed_region_name(&self) -> &'static str {
+        "The Void"
     }
 
     fn apply_rule_table_modifications(&self, modifier: &mut TableModifier<'_>) {

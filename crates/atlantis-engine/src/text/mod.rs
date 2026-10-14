@@ -56,20 +56,19 @@ pub fn get_token(input: &mut String) -> Option<String> {
 }
 
 /// C++: `astring.cpp` `AString::isEqual` (lines 136-157).
-pub fn is_equal(left: &str, right: &str) -> bool {
-    fn fold(byte: u8) -> u8 {
-        match byte {
-            b'A'..=b'Z' => byte + (b'a' - b'A'),
-            b'_' => b' ',
-            _ => byte,
-        }
+pub(crate) fn fold_case_underscore_byte(byte: u8) -> u8 {
+    match byte {
+        b'A'..=b'Z' => byte + (b'a' - b'A'),
+        b'_' => b' ',
+        _ => byte,
     }
+}
 
+pub fn is_equal(left: &str, right: &str) -> bool {
     left.len() == right.len()
-        && left
-            .bytes()
-            .zip(right.bytes())
-            .all(|(left, right)| fold(left) == fold(right))
+        && left.bytes().zip(right.bytes()).all(|(left, right)| {
+            fold_case_underscore_byte(left) == fold_case_underscore_byte(right)
+        })
 }
 
 /// C++: `astring.cpp` `AString::value` (lines 351-362).
