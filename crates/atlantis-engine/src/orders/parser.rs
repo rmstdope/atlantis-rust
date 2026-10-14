@@ -1782,7 +1782,7 @@ mod tests {
         let result = parse_order_file(
             &mut game,
             ruleset.game_defs(),
-            b"#atlantis 7 none\nunit 10\nmove North n nOrThEaSt NE Southeast SE South s Southwest SW Northwest NW 12tail in out pause p\nmove 0 north\nmove northeast\nmove invalid south\nmove -12 north\n#end\n",
+            b"#atlantis 7 none\nunit 10\nmove North n nOrThEaSt NE Southeast SE South s Southwest SW Northwest NW 12tail in out pause p\nmove 0 north\nmove northeast\nmove invalid south\nmove -100 north\n#end\n",
             OrderParseMode::Turn,
         )
         .unwrap();
@@ -1857,7 +1857,7 @@ mod tests {
         parse_order_file(
             &mut sail_game,
             ruleset.game_defs(),
-            b"#atlantis 7 none\nunit 10\nsail north NE SE south SW northwest p in south\nsail out\nsail 12\nsail invalid\nsail -12 north\n#end\n",
+            b"#atlantis 7 none\nunit 10\nsail north NE SE south SW northwest p in south\nsail out\nsail 12\nsail invalid\nsail -100 north\n#end\n",
             OrderParseMode::Turn,
         )
         .unwrap();
