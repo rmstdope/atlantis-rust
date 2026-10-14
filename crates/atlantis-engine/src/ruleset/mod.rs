@@ -22,7 +22,7 @@ pub trait Ruleset: Sync {
     fn game_defs(&self) -> &'static GameDefs;
     fn faction_limits(&self) -> &'static FactionLimits;
     fn faction_types(&self) -> &'static [&'static str];
-    fn apply_rule_table_modifications(&self, modifier: &mut TableModifier<'_>);
+    fn apply_rule_table_modifications(&self, _modifier: &mut TableModifier<'_>) {}
 
     fn name(&self) -> &'static str {
         self.game_defs().ruleset_name
@@ -105,9 +105,49 @@ fn apply_common_table_suffix(defs: &GameDefs, modifier: &mut TableModifier<'_>) 
             modifier.modify_range_flags(range, range_flags::CROSS_LEVELS);
         }
     }
+
     if defs.transport & crate::defs::enums::flags::ALLOW_TRANSPORT != 0 {
         let skill = modifier.skill_id("quartermaster");
         modifier.enable_skill(skill);
         modifier.enable_object(crate::defs::objects::O_CARAVANSERAI as i32);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct DownstreamRuleset;
+
+    impl Ruleset for DownstreamRuleset {
+        fn game_defs(&self) -> &'static GameDefs {
+            <dyn Ruleset>::from_name("standard")
+                .expect("standard ruleset")
+                .game_defs()
+        }
+
+        fn faction_limits(&self) -> &'static FactionLimits {
+            static LIMITS: FactionLimits = FactionLimits {
+                mages: &[],
+                apprentices: &[],
+                taxes: &[],
+                trades: &[],
+                quartermasters: &[],
+                tacticians: &[],
+                martial: &[],
+            };
+            &LIMITS
+        }
+
+        fn faction_types(&self) -> &'static [&'static str] {
+            &[]
+        }
+    }
+
+    #[test]
+    fn ruleset_implementations_can_omit_table_modification_hook() {
+        let ruleset: &dyn Ruleset = &DownstreamRuleset;
+        let tables = ruleset.tables();
+        assert_eq!(tables.item_families.items.len(), crate::defs::ITEM_COUNT);
     }
 }
