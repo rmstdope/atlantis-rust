@@ -111,6 +111,16 @@ OBJECT_ARRAY_FIELDS = {
     },
 }
 
+SKILL_FAMILY_TABLES = {
+    "skills",
+    "healing",
+    "magic_healing",
+    "specials",
+    "effects",
+    "ranges",
+    "attribute_modifiers",
+}
+
 
 def fail(message):
     print(message, file=sys.stderr)
@@ -221,13 +231,92 @@ def run_dump(binary, ruleset):
                         f"{ruleset}: {table}.{field}[{index}] has an "
                         "unexpected object shape"
                     )
-
     for table, count in counts.items():
         indices = [row.get("index") for row in rows if row["table"] == table]
         if indices != list(range(count)):
             fail(f"{ruleset}: {table} indices do not match its declared count")
 
     return rows, global_rows
+
+
+def check_pre_modify_skill_dump(binary, ruleset, project):
+    if not binary.is_file() or not os.access(binary, os.X_OK):
+        fail(f"{ruleset}: reference binary is not executable: {binary}")
+
+    outputs = []
+    for _ in range(2):
+        with tempfile.TemporaryDirectory(prefix=f"atlantis-skills-{ruleset}-") as cwd:
+            result = subprocess.run(
+                [str(binary), "dump-skill-tables"],
+                check=False,
+                capture_output=True,
+                cwd=cwd,
+                text=True,
+            )
+        if result.returncode != 0:
+            fail(
+                f"{ruleset}: dump-skill-tables exited {result.returncode}: "
+                f"{result.stderr.strip()}"
+            )
+        outputs.append(result.stdout)
+
+    if outputs[0] != outputs[1]:
+        fail(f"{ruleset}: pre-modify skill-family dump is not deterministic")
+
+    fixture = (
+        project
+        / "fixtures"
+        / "tables"
+        / "pre-modify-skill-families"
+        / f"{ruleset}.jsonl"
+    )
+    if not fixture.is_file():
+        fail(f"{ruleset}: pre-modify skill-family fixture is missing: {fixture}")
+    if outputs[0].encode() != fixture.read_bytes():
+        fail(f"{ruleset}: pre-modify skill-family dump differs from {fixture}")
+
+    rows = []
+    for line_number, line in enumerate(outputs[0].splitlines(), 1):
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as error:
+            fail(f"{ruleset}: invalid skill-family JSON on line {line_number}: {error}")
+        if not isinstance(row, dict) or not isinstance(row.get("table"), str):
+            fail(f"{ruleset}: skill-family line {line_number} is not a table record")
+        rows.append(row)
+
+    counts_rows = [row for row in rows if row["table"] == "counts"]
+    counts = {row.get("name"): row.get("value") for row in counts_rows}
+    if len(counts_rows) != len(SKILL_FAMILY_TABLES) or set(counts) != SKILL_FAMILY_TABLES:
+        fail(f"{ruleset}: pre-modify skill-family counts are incomplete")
+    expected_tables = SKILL_FAMILY_TABLES | {"counts"}
+    if {row["table"] for row in rows} != expected_tables:
+        fail(f"{ruleset}: pre-modify skill-family tables are incomplete")
+
+    for row in rows:
+        table = row["table"]
+        if table == "counts":
+            expected_fields = {"table", "name", "value"}
+        else:
+            expected_fields = {"table", "index"} | TABLE_FIELDS[table]
+        if set(row) != expected_fields:
+            fail(f"{ruleset}: unexpected fields in {table} record")
+        for field in ARRAY_FIELDS.get(table, set()):
+            if not isinstance(row[field], list):
+                fail(f"{ruleset}: {table}.{field} is not an array")
+        for field, object_fields in OBJECT_ARRAY_FIELDS.get(table, {}).items():
+            for index, value in enumerate(row[field]):
+                if not isinstance(value, dict) or set(value) != object_fields:
+                    fail(
+                        f"{ruleset}: {table}.{field}[{index}] has an "
+                        "unexpected object shape"
+                    )
+
+    for table, count in counts.items():
+        indices = [row.get("index") for row in rows if row["table"] == table]
+        if not isinstance(count, int) or indices != list(range(count)):
+            fail(f"{ruleset}: pre-modify {table} indices do not match its count")
+    print(f"{ruleset}: pre-modify skill-family JSONL matches its reference snapshot")
 
 
 def item_flags(rows, abbreviation, ruleset):
@@ -247,8 +336,9 @@ def main():
         return 2
 
     build_root = Path(sys.argv[1]).expanduser().resolve() / "Atlantis"
-    project = consumer_root()
-    source = project.parent / "Atlantis" / "gamedefs.h"
+    project = Path(__file__).resolve().parents[2]
+    consumer = consumer_root()
+    source = consumer.parent / "Atlantis" / "gamedefs.h"
     if not source.is_file():
         fail(f"C++ GameDefs header not found: {source}")
     expected_globals = expected_game_defs(source)
@@ -257,10 +347,12 @@ def main():
 
     dumps = {}
     for ruleset in ("standard", "neworigins"):
+        binary = build_root / ruleset / ruleset
         rows, global_rows = run_dump(
-            build_root / ruleset / ruleset,
+            binary,
             ruleset,
         )
+        check_pre_modify_skill_dump(binary, ruleset, project)
         actual_globals = {row.get("name") for row in global_rows}
         if actual_globals != expected_globals:
             fail(

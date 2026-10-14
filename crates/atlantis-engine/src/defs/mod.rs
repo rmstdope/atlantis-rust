@@ -1,6 +1,7 @@
 pub mod enums;
 pub mod gamedefs;
 pub mod objects;
+pub mod skills;
 pub mod strings;
 pub mod terrains;
 
