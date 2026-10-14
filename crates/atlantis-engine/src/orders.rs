@@ -1,5 +1,10 @@
 use crate::text::{get_token, is_equal, value};
 
+mod parser;
+pub use parser::{
+    parse_order_file, OrderParseError, OrderParseMode, OrderParseResult, ParsedOrderLine,
+};
+
 /// C++: `orders.h` order enum and `orders.cpp` `od` keyword table.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(i32)]
