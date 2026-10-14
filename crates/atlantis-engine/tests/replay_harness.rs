@@ -279,9 +279,9 @@ fn replay_fixtures_match_sha256_manifest() {
         assert_eq!(digest.len(), 64, "invalid SHA-256 digest for {filename:?}");
         assert!(
             filename_text.starts_with("fixtures/standard/turn_")
-            || filename_text.starts_with("fixtures/neworigins/turn_")
-            || filename_text.starts_with("fixtures/new-game/")
-            || filename_text.starts_with("fixtures/economy/region-setup/"),
+                || filename_text.starts_with("fixtures/neworigins/turn_")
+                || filename_text.starts_with("fixtures/new-game/")
+                || filename_text.starts_with("fixtures/economy/region-setup/"),
             "unexpected file in fixture manifest: {filename:?}"
         );
         assert!(
