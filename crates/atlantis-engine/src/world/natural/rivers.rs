@@ -363,14 +363,16 @@ fn best_river_endpoints(
     river_regions: &BTreeMap<RegionId, usize>,
 ) -> Option<(RegionId, RegionId, i64)> {
     let blocked = blocked_river_regions(game, source, target, inner_water, river_regions);
+    let target_regions = target.regions.iter().copied().collect();
     let mut best = None;
     for &start in &source.regions {
         if inner_water.contains(&start) {
             continue;
         }
-        let (distances, _) = dijkstra_all(game, start, &blocked, |_, next| {
-            river_step_cost(game, map, next, river_regions)
-        });
+        let (distances, _) =
+            dijkstra_until_targets(game, start, &blocked, &target_regions, |_, next| {
+                river_step_cost(game, map, next, river_regions)
+            });
         for &end in &target.regions {
             let Some(&(cost, _)) = distances.get(&end) else {
                 continue;
@@ -459,6 +461,32 @@ fn dijkstra_all<F>(
     game: &Game,
     start: RegionId,
     blocked: &BTreeSet<RegionId>,
+    step_cost: F,
+) -> (PathDistances, PathPredecessors)
+where
+    F: FnMut(RegionId, RegionId) -> i64,
+{
+    dijkstra(game, start, blocked, None, step_cost)
+}
+
+fn dijkstra_until_targets<F>(
+    game: &Game,
+    start: RegionId,
+    blocked: &BTreeSet<RegionId>,
+    targets: &BTreeSet<RegionId>,
+    step_cost: F,
+) -> (PathDistances, PathPredecessors)
+where
+    F: FnMut(RegionId, RegionId) -> i64,
+{
+    dijkstra(game, start, blocked, Some(targets), step_cost)
+}
+
+fn dijkstra<F>(
+    game: &Game,
+    start: RegionId,
+    blocked: &BTreeSet<RegionId>,
+    targets: Option<&BTreeSet<RegionId>>,
     mut step_cost: F,
 ) -> (PathDistances, PathPredecessors)
 where
@@ -468,12 +496,19 @@ where
     let mut previous = BTreeMap::new();
     let mut queue = BinaryHeap::from([Reverse((0_i64, 0_u64, start))]);
     let mut sequence = 1_u64;
+    let mut target_distance = None;
     while let Some(Reverse((distance, _, current))) = queue.pop() {
+        if target_distance.is_some_and(|target_distance| distance > target_distance) {
+            break;
+        }
         if distances
             .get(&current)
             .is_none_or(|(known, _)| distance != *known)
         {
             continue;
+        }
+        if targets.is_some_and(|targets| targets.contains(&current)) {
+            target_distance.get_or_insert(distance);
         }
         let neighbors = game.region(current).expect("path region exists").neighbors;
         for next in neighbors.into_iter().flatten() {
@@ -643,6 +678,50 @@ mod tests {
         let actual = super::unweighted_distances_from_sources(&game, &sources, &blocked);
 
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn nearest_target_search_matches_full_dijkstra_and_stops_after_nearest_target() {
+        let (mut game, array) = surface();
+        for region_id in game.region_ids().to_vec() {
+            game.region_mut(region_id).unwrap().terrain_type = Some(R_PLAIN);
+        }
+        let start = array.get_region(0, 0).expect("start exists");
+        let nearest_targets: Vec<_> = game
+            .region(start)
+            .expect("start region exists")
+            .neighbors
+            .iter()
+            .flatten()
+            .copied()
+            .take(2)
+            .collect();
+        assert_eq!(nearest_targets.len(), 2);
+        let targets = BTreeSet::from([
+            nearest_targets[0],
+            nearest_targets[1],
+            array.get_region(6, 6).expect("far target exists"),
+        ]);
+        let blocked = BTreeSet::new();
+
+        let (all_distances, _) = super::dijkstra_all(&game, start, &blocked, |_, _| 1);
+        let (target_distances, _) =
+            super::dijkstra_until_targets(&game, start, &blocked, &targets, |_, _| 1);
+        let nearest_full = targets
+            .iter()
+            .filter_map(|target| all_distances.get(target).map(|(cost, _)| (*cost, *target)))
+            .min();
+        let nearest_target_search = targets
+            .iter()
+            .filter_map(|target| {
+                target_distances
+                    .get(target)
+                    .map(|(cost, _)| (*cost, *target))
+            })
+            .min();
+
+        assert_eq!(nearest_target_search, nearest_full);
+        assert!(target_distances.len() < all_distances.len());
     }
 
     #[test]
