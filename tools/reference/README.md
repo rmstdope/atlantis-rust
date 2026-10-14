@@ -80,3 +80,11 @@ change the reference engine's random draw count.
 The command validates the ruleset, area, turn sequence, staged inputs, and order/template names.
 It requires a complete prior fixture; importing or generating a baseline fixture is a separate
 step. The Rust replay harness can then verify the recorded turn when it is available.
+
+## Recording a fixed-map new-game fixture
+
+`record-new-game.sh <standard|neworigins>` builds the patched reference and runs its
+`new-game-fixture` command over the same hand-built nexus and surface map for either ruleset. It
+records the resulting faction/unit state and the complete seeded RNG trace under
+`fixtures/new-game/`, then updates `fixtures/SHA256SUMS`. These snapshots are generated from the
+C++ reference; do not edit them by hand or regenerate them from Rust.

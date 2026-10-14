@@ -4,7 +4,7 @@ mod standard;
 use crate::defs::{
     modify::TableModifier,
     skills::{attribute_item_flags, attribute_modifier_types, range_flags},
-    GameDefs, RulesetTables,
+    GameDefs, ItemId, RulesetTables,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18,11 +18,44 @@ pub struct FactionLimits {
     pub martial: &'static [i32],
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StartingFactionSetup {
+    pub unclaimed_per_turn: i32,
+    pub studies: Vec<(&'static str, i32)>,
+    pub set_flags: i32,
+    pub clear_flags: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VirtualMonster {
+    pub object_type: i32,
+    pub item: ItemId,
+    pub name: &'static str,
+    pub count: i32,
+}
+
 pub trait Ruleset: Sync {
     fn game_defs(&self) -> &'static GameDefs;
     fn faction_limits(&self) -> &'static FactionLimits;
     fn faction_types(&self) -> &'static [&'static str];
     fn apply_rule_table_modifications(&self, _modifier: &mut TableModifier<'_>) {}
+
+    fn starting_faction_setup(&self, turn_number: i32) -> StartingFactionSetup {
+        let mut studies = vec![("PATT", 30), ("SPIR", 30), ("GATE", 30)];
+        if turn_number >= 25 {
+            studies.extend([("PATT", 60), ("SPIR", 60), ("FORC", 90), ("COMB", 30)]);
+        }
+        StartingFactionSetup {
+            unclaimed_per_turn: 50,
+            studies,
+            set_flags: 0,
+            clear_flags: 0,
+        }
+    }
+
+    fn virtual_monster(&self) -> Option<VirtualMonster> {
+        None
+    }
 
     fn name(&self) -> &'static str {
         self.game_defs().ruleset_name

@@ -3,6 +3,8 @@
 pub mod defs;
 pub mod model;
 pub mod orders;
+pub mod newgame;
+pub mod npc;
 pub mod output;
 pub mod players;
 pub mod rng;

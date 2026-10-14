@@ -16,7 +16,7 @@ use crate::defs::{
 };
 use crate::version::AtlVersion;
 
-use super::{FactionLimits, Ruleset};
+use super::{FactionLimits, Ruleset, StartingFactionSetup};
 
 pub(super) struct NewOrigins;
 pub(super) static NEW_ORIGINS: NewOrigins = NewOrigins;
@@ -211,6 +211,23 @@ impl Ruleset for NewOrigins {
 
     fn faction_types(&self) -> &'static [&'static str] {
         FACTION_TYPES
+    }
+
+    fn starting_faction_setup(&self, _turn_number: i32) -> StartingFactionSetup {
+        StartingFactionSetup {
+            unclaimed_per_turn: 300,
+            studies: vec![
+                ("OBSE", 30),
+                ("FORC", 30),
+                ("PATT", 30),
+                ("SPIR", 30),
+                ("GATE", 30),
+                ("FIRE", 30),
+                ("COMB", 180),
+            ],
+            set_flags: 0x0001,
+            clear_flags: 0x0002 | 0x0008 | 0x0010,
+        }
     }
 
     fn apply_rule_table_modifications(&self, modifier: &mut TableModifier<'_>) {
