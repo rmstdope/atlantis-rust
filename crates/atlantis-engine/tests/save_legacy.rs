@@ -400,6 +400,11 @@ fn legacy_writer_writes_regions_objects_units_and_conditional_fields() {
     unit.visited.insert("alpha".to_owned());
     game.add_unit(fleet_id, unit).expect("add unit to fleet");
 
+    let mut later_unit = Unit::new(31, Some(faction_id), 0, 0);
+    later_unit.name = Some("Unit 31".to_owned());
+    game.add_unit(fleet_id, later_unit)
+        .expect("add later unit to fleet");
+
     let mut second_object = Object::default();
     second_object.num = 4;
     second_object.object_type = O_DUMMY as i32;
@@ -428,7 +433,7 @@ fn legacy_writer_writes_regions_objects_units_and_conditional_fields() {
     assert!(output
         .contains("2\n0\nWOOD\n11\n12\n13\n14\n15\n16\n17\n1\nNO_ITEM\n0\n0\n0\n0\n0\n0\n0\n"));
     assert!(output.contains(&format!(
-        "12\n{fleet_type}\n1\nFleet\nFleet description\n7\n-1\n6\n1\n"
+        "12\n{fleet_type}\n1\nFleet\nFleet description\n7\n-1\n6\n2\n"
     )));
     assert!(output.contains(&format!(
         "4\n{dummy_type}\n0\nWarehouse\nnone\n-1\n-1\n0\n0\n"
@@ -441,6 +446,16 @@ fn legacy_writer_writes_regions_objects_units_and_conditional_fields() {
     )));
     assert!(output.contains("2\n2 WOOD\n3 iWOLF\n1\nMINI 10\nMINI\n5\n2\n2\nalpha\nzeta\n"));
     assert!(output.contains("Neighbors\n5\n-1\n-1\n-1\n-1\n-1\n40\n-1\n-1\n-1\n-1\n-1\n0\n"));
+    let fleet_position = output
+        .find(&format!("12\n{fleet_type}\n"))
+        .expect("fleet object serialized");
+    let warehouse_position = output
+        .find(&format!("4\n{dummy_type}\n0\nWarehouse\n"))
+        .expect("warehouse object serialized");
+    assert!(fleet_position < warehouse_position);
+    let first_unit_position = output.find("Unit 44\n").expect("first unit serialized");
+    let later_unit_position = output.find("Unit 31\n").expect("later unit serialized");
+    assert!(first_unit_position < later_unit_position);
     let first_region_position = output
         .find(&format!("First\n40\n{terrain}\n"))
         .expect("first region serialized");

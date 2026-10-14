@@ -573,3 +573,27 @@ fn put_str(output: &mut String, value: &str) {
     output.push_str(value);
     output.push('\n');
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn object_writeout_preserves_prevdir_when_rules_enable_it() {
+        let ruleset = <dyn Ruleset>::from_name("Wyreth").expect("standard ruleset");
+        let tables = ruleset.tables();
+        let mut defs = *ruleset.game_defs();
+        defs.prevent_sail_through = 1;
+        defs.allow_trivial_portage = 0;
+
+        let mut object = Object::default();
+        object.object_type = crate::defs::objects::O_FLEET as i32;
+        object.prevdir = 5;
+        let mut output = String::new();
+
+        write_object(&mut output, &object, &Game::default(), &tables, &defs)
+            .expect("write fleet object");
+
+        assert_eq!(output.lines().nth(6), Some("5"));
+    }
+}
