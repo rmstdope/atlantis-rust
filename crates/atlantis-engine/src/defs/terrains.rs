@@ -42,35 +42,12 @@ pub struct TerrainDef {
 
 include!("terrains_data.rs");
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn json_string(value: &str) -> String {
-        let mut result = String::from("\"");
-        for character in value.chars() {
-            match character {
-                '"' => result.push_str("\\\""),
-                '\\' => result.push_str("\\\\"),
-                '\n' => result.push_str("\\n"),
-                '\r' => result.push_str("\\r"),
-                '\t' => result.push_str("\\t"),
-                character => result.push(character),
-            }
-        }
-        result.push('"');
-        result
-    }
-
-    fn int_array(values: &[i32]) -> String {
-        values
-            .iter()
-            .map(i32::to_string)
-            .collect::<Vec<_>>()
-            .join(",")
-    }
-
-    fn terrain_row(index: usize, terrain: &TerrainDef) -> String {
+pub fn terrain_table_jsonl(terrains: &[TerrainDef]) -> String {
+    let mut output = format!(
+        "{{\"table\":\"counts\",\"name\":\"terrains\",\"value\":{}}}\n",
+        terrains.len()
+    );
+    for (index, terrain) in terrains.iter().enumerate() {
         let products = terrain
             .products
             .iter()
@@ -82,8 +59,8 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join(",");
-        format!(
-            "{{\"table\":\"terrains\",\"index\":{index},\"name\":{},\"plural\":{},\"type\":{},\"marker\":{},\"similar_type\":{},\"flags\":{},\"population\":{},\"wages\":{},\"economy\":{},\"movement_points\":{},\"products\":[{products}],\"races\":[{}],\"coastal_races\":[{}],\"wandering_monster_frequency\":{},\"small_monster\":{},\"big_monster\":{},\"humanoid\":{},\"lair_chance\":{},\"lairs\":[{}]}}",
+        output.push_str(&format!(
+            "{{\"table\":\"terrains\",\"index\":{index},\"name\":{},\"plural\":{},\"type\":{},\"marker\":{},\"similar_type\":{},\"flags\":{},\"population\":{},\"wages\":{},\"economy\":{},\"movement_points\":{},\"products\":[{products}],\"races\":[{}],\"coastal_races\":[{}],\"wandering_monster_frequency\":{},\"small_monster\":{},\"big_monster\":{},\"humanoid\":{},\"lair_chance\":{},\"lairs\":[{}]}}\n",
             json_string(terrain.name),
             json_string(terrain.plural),
             json_string(terrain.terrain_type),
@@ -102,15 +79,45 @@ mod tests {
             terrain.humanoid,
             terrain.lair_chance,
             int_array(&terrain.lairs),
-        )
+        ));
     }
+    output
+}
+
+fn json_string(value: &str) -> String {
+    let mut result = String::from("\"");
+    for character in value.chars() {
+        match character {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            character => result.push(character),
+        }
+    }
+    result.push('"');
+    result
+}
+
+fn int_array(values: &[i32]) -> String {
+    values
+        .iter()
+        .map(i32::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
 
     #[test]
     fn terrain_defaults_match_standard_reference() {
-        let actual = TERRAIN_DEFS
-            .iter()
-            .enumerate()
-            .map(|(index, terrain)| terrain_row(index, terrain))
+        let actual = terrain_table_jsonl(&TERRAIN_DEFS)
+            .lines()
+            .skip(1)
+            .map(str::to_owned)
             .collect::<Vec<_>>();
         let expected = include_str!("../../../../fixtures/tables/standard.jsonl")
             .lines()

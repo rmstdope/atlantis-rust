@@ -4811,7 +4811,38 @@ pub fn write_skill_family_jsonl(
     tables: &SkillTables,
 ) -> Result<(), InvalidTableReference> {
     validate_references(tables)?;
-    write_skills(output, &tables.skills, &tables.specials, &tables.ranges)?;
+    write_skill_rows(output, tables)?;
+    write_skill_support(output, tables)?;
+    Ok(())
+}
+
+pub fn write_skill_rows_jsonl(
+    output: &mut String,
+    tables: &SkillTables,
+) -> Result<(), InvalidTableReference> {
+    validate_references(tables)?;
+    write_skill_rows(output, tables)
+}
+
+pub fn write_skill_support_jsonl(
+    output: &mut String,
+    tables: &SkillTables,
+) -> Result<(), InvalidTableReference> {
+    validate_references(tables)?;
+    write_skill_support(output, tables)
+}
+
+fn write_skill_rows(
+    output: &mut String,
+    tables: &SkillTables,
+) -> Result<(), InvalidTableReference> {
+    write_skills(output, &tables.skills, &tables.specials, &tables.ranges)
+}
+
+fn write_skill_support(
+    output: &mut String,
+    tables: &SkillTables,
+) -> Result<(), InvalidTableReference> {
     write_healing(output, "healing", &tables.healing);
     write_healing(output, "magic_healing", &tables.magic_healing);
     write_specials(output, &tables.specials, &tables.effects)?;

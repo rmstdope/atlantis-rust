@@ -1,5 +1,6 @@
 pub mod enums;
 pub mod gamedefs;
+pub mod modify;
 pub mod objects;
 pub mod skills;
 pub mod strings;
@@ -37,6 +38,36 @@ impl Default for Tables {
     fn default() -> Self {
         Self::from_item_family_jsonl(include_str!("item-families-default.jsonl"))
             .expect("embedded C++ item-family defaults are valid")
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RulesetTables {
+    pub item_families: Tables,
+    pub objects: Vec<ObjectDef>,
+    pub terrains: Vec<TerrainDef>,
+    pub skills: skills::SkillTables,
+}
+
+impl Default for RulesetTables {
+    fn default() -> Self {
+        Self {
+            item_families: Tables::default(),
+            objects: OBJECT_DEFS.to_vec(),
+            terrains: TERRAIN_DEFS.to_vec(),
+            skills: skills::SkillTables::default(),
+        }
+    }
+}
+
+impl RulesetTables {
+    pub fn tables_jsonl(&self) -> Result<String, skills::InvalidTableReference> {
+        let mut output = self.item_families.item_families_jsonl();
+        output.push_str(&objects::object_table_jsonl(&self.objects));
+        skills::write_skill_rows_jsonl(&mut output, &self.skills)?;
+        output.push_str(&terrains::terrain_table_jsonl(&self.terrains));
+        skills::write_skill_support_jsonl(&mut output, &self.skills)?;
+        Ok(output)
     }
 }
 
