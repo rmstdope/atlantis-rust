@@ -424,7 +424,7 @@ fn legacy_writer_writes_regions_objects_units_and_conditional_fields() {
     assert!(output.contains("2\n1\n2\n2\nTest level\n1\n1\n"));
     assert!(output.contains(&format!("First\n40\n{terrain}\n13\n3\n8\nPEAS\n")));
     assert!(output.contains("Second\n5\n"));
-    assert!(output.contains(&format!("2\nSILV\n17\n12\nMINI\n9\nWOOD\n4\n1\n6\n")));
+    assert!(output.contains("2\nSILV\n17\n12\nMINI\n9\nWOOD\n4\n1\n6\n"));
     assert!(output
         .contains("2\n0\nWOOD\n11\n12\n13\n14\n15\n16\n17\n1\nNO_ITEM\n0\n0\n0\n0\n0\n0\n0\n"));
     assert!(output.contains(&format!(

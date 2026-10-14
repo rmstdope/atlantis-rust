@@ -72,11 +72,11 @@ fn write_quests(
                 put_line(output, quest.region_num);
             }
             2 => {
-                put_str(output, &object_symbol_by_index(tables, quest.building)?);
+                put_str(output, object_symbol_by_index(tables, quest.building)?);
                 put_str(output, &quest.region_name);
             }
             3 => {
-                put_str(output, &object_symbol_by_index(tables, quest.building)?);
+                put_str(output, object_symbol_by_index(tables, quest.building)?);
                 write_destinations(output, &quest.destinations);
             }
             5 => {
@@ -86,7 +86,7 @@ fn write_quests(
             _ => {
                 put_line(output, quest.target);
                 write_quest_objective(output, quest, tables)?;
-                put_str(output, &object_symbol_by_index(tables, quest.building)?);
+                put_str(output, object_symbol_by_index(tables, quest.building)?);
                 put_line(output, quest.region_num);
                 put_str(output, &quest.region_name);
                 write_destinations(output, &quest.destinations);
@@ -334,8 +334,6 @@ fn write_object(
     Ok(())
 }
 
-/// C++: `faction.cpp` `Faction::Writeout`.
-
 /// C++: `unit.cpp` `Unit::Writeout`; visited locations use ordered set iteration.
 fn write_unit(
     output: &mut String,
@@ -386,6 +384,7 @@ fn write_unit(
     Ok(())
 }
 
+/// C++: `faction.cpp` `Faction::Writeout`.
 fn write_faction(
     output: &mut String,
     faction: &Faction,
