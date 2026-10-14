@@ -18,6 +18,13 @@ impl ItemList {
         &self.entries
     }
 
+    pub fn get_num(&self, item_type: ItemId) -> i32 {
+        self.entries
+            .iter()
+            .find(|item| item.item_type == item_type)
+            .map_or(0, |item| item.num)
+    }
+
     /// C++: `items.cpp` `ItemList::SetNum`; zero removes the entry, so re-adding appends it.
     pub fn set_num(&mut self, item_type: ItemId, num: i32) {
         if let Some(index) = self
@@ -58,15 +65,36 @@ impl SkillList {
         &self.entries
     }
 
-    pub fn set(&mut self, skill_type: usize, days: u32, exp: u32) {
-        if let Some(skill) = self
-            .entries
-            .iter_mut()
+    pub fn get_days(&self, skill_type: usize) -> u32 {
+        self.entries
+            .iter()
             .find(|skill| skill.skill_type == skill_type)
+            .map_or(0, |skill| skill.days)
+    }
+
+    pub fn set_days(&mut self, skill_type: usize, days: u32) {
+        let exp = self
+            .entries
+            .iter()
+            .find(|skill| skill.skill_type == skill_type)
+            .map_or(0, |skill| skill.exp);
+        self.set(skill_type, days, exp);
+    }
+
+    pub fn set(&mut self, skill_type: usize, days: u32, exp: u32) {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|skill| skill.skill_type == skill_type)
         {
-            skill.days = days;
-            skill.exp = exp;
-        } else {
+            if days == 0 && exp == 0 {
+                self.entries.remove(index);
+            } else {
+                let skill = &mut self.entries[index];
+                skill.days = days;
+                skill.exp = exp;
+            }
+        } else if days != 0 || exp != 0 {
             self.entries.push(Skill {
                 skill_type,
                 days,

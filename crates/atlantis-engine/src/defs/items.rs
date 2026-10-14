@@ -11,9 +11,32 @@ pub const NUM_ATTACK_TYPES: usize = 6;
 pub const NUM_WEAPON_CLASSES: usize = 8;
 pub const MAX_WEAPON_BONUS_TARGETS: usize = 4;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(usize)]
-pub enum ItemId {
+macro_rules! item_id_enum {
+    ($($variant:ident),+ $(,)?) => {
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(usize)]
+        pub enum ItemId {
+            $($variant),+
+        }
+
+        impl ItemId {
+            pub const COUNT: usize = ITEM_COUNT;
+
+            pub const fn index(self) -> usize {
+                self as usize
+            }
+
+            pub fn from_index(index: usize) -> Option<Self> {
+                const ALL: [ItemId; ITEM_COUNT] = [$(
+                    ItemId::$variant
+                ),+];
+                ALL.get(index).copied()
+            }
+        }
+    };
+}
+
+item_id_enum! {
     Leaders,
     Viking,
     Barbarian,
@@ -243,14 +266,6 @@ pub enum ItemId {
     Catapult,
     SteelDefender,
     Devil,
-}
-
-impl ItemId {
-    pub const COUNT: usize = ITEM_COUNT;
-
-    pub const fn index(self) -> usize {
-        self as usize
-    }
 }
 
 pub struct ItemTypeFlags;

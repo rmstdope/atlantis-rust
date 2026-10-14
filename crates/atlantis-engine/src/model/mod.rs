@@ -4,8 +4,8 @@ mod ids;
 mod lists;
 
 pub use entities::{
-    Attitude, Faction, FactionActivity, FactionActivityRecord, GuardMode, Market, MarketType,
-    Object, Production, Region, TownInfo, Unit, UnitType,
+    Attitude, Faction, FactionActivity, FactionActivityRecord, FactionItemShow, FactionSkillShow,
+    GuardMode, Market, MarketType, Object, Production, Region, TownInfo, Unit, UnitType,
 };
 pub use game::{
     Game, ModelError, RegionArray, RegionArrayError, RegionLevelType, UnitNumberingIssue,
