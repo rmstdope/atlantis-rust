@@ -2,15 +2,15 @@ use crate::defs::{
     enums::{BattleLogLevel, DestroyBehavior, FactionActivityRules},
     modify::TableModifier,
     objects::{
-        O_AMINE, O_DERELICT, O_ISLE, O_MQUARRY, O_OCAVE, O_PRESERVE, O_ROADN, O_ROADNE, O_ROADNW,
-        O_ROADS, O_ROADSE, O_ROADSW, O_SACGROVE, O_TEMPLE, O_WHIRL,
+        O_AMINE, O_BKEEP, O_DERELICT, O_ISLE, O_MQUARRY, O_OCAVE, O_PRESERVE, O_ROADN, O_ROADNE,
+        O_ROADNW, O_ROADS, O_ROADSE, O_ROADSW, O_SACGROVE, O_TEMPLE, O_WHIRL,
     },
     terrains::R_NEXUS,
     GameDefs, ItemId,
 };
 use crate::version::AtlVersion;
 
-use super::{FactionLimits, Ruleset};
+use super::{FactionLimits, Ruleset, VirtualMonster};
 
 pub(super) struct Standard;
 pub(super) static STANDARD: Standard = Standard;
@@ -205,6 +205,15 @@ impl Ruleset for Standard {
 
     fn faction_types(&self) -> &'static [&'static str] {
         FACTION_TYPES
+    }
+
+    fn virtual_monster(&self) -> Option<VirtualMonster> {
+        Some(VirtualMonster {
+            object_type: O_BKEEP as i32,
+            item: ItemId::Balrog,
+            name: "Elder Demons",
+            count: 200,
+        })
     }
 
     fn apply_rule_table_modifications(&self, modifier: &mut TableModifier<'_>) {

@@ -6,6 +6,16 @@ pub mod output;
 pub use input::TextInput;
 pub use output::{ReportWriter, RulesWriter};
 
+/// C++: `neworigins/world.cpp` `CountNames`; writes names in generation order.
+pub fn format_names_out(names: &[String]) -> String {
+    let mut output = String::new();
+    for name in names {
+        output.push_str(name);
+        output.push('\n');
+    }
+    output
+}
+
 /// C++: `astring.cpp` `AString::gettoken` (lines 204-251).
 ///
 /// A comment marker at the start of the remaining input leaves it unchanged;
@@ -360,5 +370,14 @@ mod tests {
         );
         assert_eq!(capitalize(""), "");
         assert_eq!(capitalize("gATE lore"), "GATE lore");
+    }
+
+    // C++: neworigins/world.cpp CountNames writes each generated name with Aoutfile::PutStr.
+    #[test]
+    fn names_out_preserves_order_and_writes_one_line_per_name() {
+        let names = ["The Void", "Greyhaven", "Northwick"].map(str::to_owned);
+
+        assert_eq!(format_names_out(&names), "The Void\nGreyhaven\nNorthwick\n");
+        assert_eq!(format_names_out(&[]), "");
     }
 }

@@ -1,0 +1,229 @@
+--- a/game.h
++++ b/game.h
+@@ -116,7 +116,8 @@
+ 	void ModifyTablesPerRuleset(void);
+ 
+ 	void RecordFact(FactBase* fact);
+ 	void WriteWorldEvents();
++	int SetupNewGameFixture();
+ private:
+ 	//
+ 	// Game editing functions.
+--- a/main.cpp
++++ b/main.cpp
+@@ -29,5 +29,8 @@
+ #include "gamedata.h"
+ 
++#include <iostream>
++#include <sstream>
++
+ void usage()
+ {
+ 	Awrite("atlantis new");
+@@ -43,5 +46,193 @@
+ 	Awrite("atlantis check <orderfile> <checkfile>");
+ }
+ 
++static ARegion *AddNewGameFixtureRegion(ARegionList &regions,
++		ARegionArray *array,
++		int number, int x, int y, int z, int terrain, int townPopulation = 0)
++{
++	ARegion *region = new ARegion();
++	region->num = number;
++	region->SetLoc(x, y, z);
++	region->type = terrain;
++	region->race = 0;
++	region->population = 0;
++	region->basepopulation = 0;
++	region->wages = 0;
++	region->maxwages = 0;
++	region->wealth = 0;
++	region->development = 0;
++	region->maxdevelopment = 0;
++	region->visited = 0;
++	region->distance = 0;
++	region->next = 0;
++	regions.Add(region);
++	array->SetRegion(x, y, region);
++
++	if (townPopulation) {
++		region->town = new TownInfo();
++		region->town->name = new AString("Fixture Town");
++		region->town->pop = townPopulation;
++		region->town->activity = 0;
++		region->town->hab = 0;
++		region->town->dev = 50;
++	}
++
++	region->objects.Add(new Object(region));
++	return region;
++}
++
++static void AddNewGameFixtureObject(ARegion *region, int type)
++{
++	Object *object = new Object(region);
++	object->type = type;
++	region->objects.Add(object);
++}
++
++static void AppendFixtureItems(std::ostringstream &row, ItemList &items)
++{
++	bool first = true;
++	forlist(&items) {
++		Item *item = (Item *)elem;
++		if (!first) row << ',';
++		first = false;
++		row << item->type << ':' << item->num;
++	}
++}
++
++static void AppendFixtureSkills(std::ostringstream &row, SkillList &skills)
++{
++	bool first = true;
++	forlist(&skills) {
++		Skill *skill = (Skill *)elem;
++		if (!first) row << ',';
++		first = false;
++		row << skill->type << ':' << skill->days << ':' << skill->exp;
++	}
++}
++
++static void PrintNewGameFixture(AList &factions, ARegionList &regions)
++{
++	{
++	forlist(&factions) {
++		Faction *faction = (Faction *)elem;
++		std::ostringstream row;
++		row << "FACTION|" << faction->num << '|' << faction->name->Str()
++			<< '|' << faction->lastorders << '|' << faction->startturn
++			<< '|' << faction->unclaimed << "|T";
++		bool first = true;
++		for (const std::string &type : *FactionTypes) {
++			if (!first) row << ',';
++			first = false;
++			row << type << ':' << faction->type[type];
++		}
++		row << "|A";
++		first = true;
++		{
++		forlist(&faction->attitudes) {
++			Attitude *attitude = (Attitude *)elem;
++			if (!first) row << ',';
++			first = false;
++			row << attitude->factionnum << ':' << attitude->attitude;
++		}
++		}
++		row << "|I";
++		AppendFixtureItems(row, faction->items);
++		row << "|S";
++		AppendFixtureSkills(row, faction->skills);
++		row << "|H";
++		first = true;
++		{
++		forlist(&faction->shows) {
++			ShowSkill *show = (ShowSkill *)elem;
++			if (!first) row << ',';
++			first = false;
++			row << show->skill << ':' << show->level;
++		}
++		}
++		row << "|R";
++		if (faction->pStartLoc) {
++			row << faction->pStartLoc->xloc << ',' << faction->pStartLoc->yloc
++				<< ',' << faction->pStartLoc->zloc;
++		} else {
++			row << '-';
++		}
++		row << '|' << faction->noStartLeader;
++		std::cout << "NPC_FIXTURE " << row.str() << '\n';
++	}
++	}
++
++	{
++	forlist(&regions) {
++		ARegion *region = (ARegion *)elem;
++		forlist(&region->objects) {
++			Object *object = (Object *)elem;
++			forlist(&object->units) {
++				Unit *unit = (Unit *)elem;
++				std::ostringstream row;
++				row << "UNIT|" << unit->num << '|' << unit->faction->num
++					<< '|' << unit->type << '|' << unit->name->Str()
++					<< '|' << unit->guard << '|' << unit->reveal << '|'
++					<< unit->flags << '|' << unit->combat << '|'
++					<< region->xloc << ',' << region->yloc << ',' << region->zloc
++					<< '|' << object->type << "|I";
++				AppendFixtureItems(row, unit->items);
++				row << "|S";
++				AppendFixtureSkills(row, unit->skills);
++				std::cout << "NPC_FIXTURE " << row.str() << '\n';
++			}
++		}
++	}
++	}
++}
++
++int Game::SetupNewGameFixture()
++{
++	factionseq = 1;
++	guardfaction = 0;
++	monfaction = 0;
++	unitseq = 1;
++	SetupUnitNums();
++	shipseq = 100;
++	year = 1;
++	month = -1;
++	gameStatus = GAME_STATUS_NEW;
++	seedrandom(424242);
++
++	regions.CreateLevels(2);
++	regions.pRegionArrays[0] = new ARegionArray(1, 1);
++	regions.pRegionArrays[0]->levelType = ARegionArray::LEVEL_NEXUS;
++	regions.pRegionArrays[0]->SetName("nexus");
++	regions.pRegionArrays[1] = new ARegionArray(8, 16);
++	regions.pRegionArrays[1]->levelType = ARegionArray::LEVEL_SURFACE;
++	regions.pRegionArrays[1]->SetName("surface");
++
++	AddNewGameFixtureRegion(regions, regions.pRegionArrays[0],
++			1, 0, 0, 0, R_NEXUS);
++	int regionNumber = 2;
++	for (int y = 0; y < 16; y++) {
++		for (int x = 0; x < 8; x++) {
++			if ((x + y) % 2) continue;
++			int terrain = (x == 1 && y == 1) ? R_TUNDRA : R_PLAIN;
++			int townPopulation = 0;
++			if (x == 0 && y == 0) townPopulation = 5000;
++			if (x == 0 && y == 2) townPopulation = 25000;
++			ARegion *region = AddNewGameFixtureRegion(regions,
++					regions.pRegionArrays[1], regionNumber++, x, y, 1,
++					terrain, townPopulation);
++			if (x == 2 && y == 0) AddNewGameFixtureObject(region, O_MAGETOWER);
++			if (x == 4 && y == 0) AddNewGameFixtureObject(region, O_BKEEP);
++		}
++	}
++
++	CreateNPCFactions();
++	if (Globals->CITY_MONSTERS_EXIST) CreateCityMons();
++	if (Globals->WANDERING_MONSTERS_EXIST) CreateWMons();
++	if (Globals->LAIR_MONSTERS_EXIST) CreateLMons();
++	if (Globals->LAIR_MONSTERS_EXIST) CreateVMons();
++	if (!AddFaction()) return 0;
++	PrintNewGameFixture(factions, regions);
++	return 1;
++}
++
+ int main(int argc, char *argv[])
+ {
+@@ -68,7 +259,9 @@
+ 	game.ModifyTablesPerRuleset();
+ 
+ 	do {
+-		if (AString(argv[1]) == "new") {
++		if (AString(argv[1]) == "new-game-fixture") {
++			if (argc != 2 || !game.SetupNewGameFixture()) break;
++		} else if (AString(argv[1]) == "new") {
+ 			if (!game.NewGame()) {
+ 				Awrite( "Couldn't make the new game!" );
+ 				break;
+*** End Patch
+ 
