@@ -39,6 +39,7 @@ pub(crate) fn determine_town_size(defs: &GameDefs, rng: &mut Rng) -> TownType {
 }
 
 /// C++: `economy.cpp` `ARegion::AddTown` and `ARegion::SetTownType`.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_town(
     game: &mut Game,
     region_id: RegionId,

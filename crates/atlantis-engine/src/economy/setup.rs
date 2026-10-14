@@ -438,6 +438,7 @@ pub fn setup_city_market(
 }
 
 /// C++: `economy.cpp` `ARegion::SetupPop`.
+#[allow(clippy::too_many_arguments)]
 pub fn setup_pop<F>(
     game: &mut Game,
     region_id: RegionId,
@@ -524,6 +525,7 @@ where
 }
 
 /// C++: `aregion.cpp` `ARegion::Setup`.
+#[allow(clippy::too_many_arguments)]
 pub fn setup_region<F>(
     game: &mut Game,
     region_id: RegionId,
@@ -567,6 +569,7 @@ where
 }
 
 /// C++: `aregion.cpp` `ARegion::ManualSetup`.
+#[allow(clippy::too_many_arguments)]
 pub fn manual_setup(
     game: &mut Game,
     region_id: RegionId,
@@ -813,6 +816,7 @@ fn randomized_market_values(
     (amount, price)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn push_market(
     region: &mut Region,
     market_type: MarketType,
