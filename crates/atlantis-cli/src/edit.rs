@@ -1202,6 +1202,85 @@ fn parse_number(token: &str, description: &str) -> Result<i32, String> {
         .map_err(|_| format!("invalid {description} {token:?}"))
 }
 
+fn same_file(input_path: &Path, output_path: &Path) -> Result<bool, String> {
+    let same_path = match (fs::canonicalize(input_path), fs::canonicalize(output_path)) {
+        (Ok(input), Ok(output)) => input == output,
+        _ => input_path == output_path,
+    };
+    if same_path {
+        return Ok(true);
+    }
+    same_file_identity(input_path, output_path)
+}
+
+#[cfg(unix)]
+fn same_file_identity(input_path: &Path, output_path: &Path) -> Result<bool, String> {
+    use std::os::unix::fs::MetadataExt;
+
+    let input = fs::metadata(input_path)
+        .map_err(|error| format!("could not inspect {}: {error}", input_path.display()))?;
+    let output = match fs::metadata(output_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "could not inspect {}: {error}",
+                output_path.display()
+            ));
+        }
+    };
+    Ok(input.dev() == output.dev() && input.ino() == output.ino())
+}
+
+#[cfg(windows)]
+fn same_file_identity(input_path: &Path, output_path: &Path) -> Result<bool, String> {
+    use std::os::windows::fs::MetadataExt;
+
+    let input = fs::metadata(input_path)
+        .map_err(|error| format!("could not inspect {}: {error}", input_path.display()))?;
+    let output = match fs::metadata(output_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "could not inspect {}: {error}",
+                output_path.display()
+            ));
+        }
+    };
+    match (
+        input.volume_serial_number(),
+        input.file_index(),
+        output.volume_serial_number(),
+        output.file_index(),
+    ) {
+        (Some(input_volume), Some(input_index), Some(output_volume), Some(output_index)) => {
+            Ok(input_volume == output_volume && input_index == output_index)
+        }
+        _ => Err(format!(
+            "could not verify that {} is distinct from {}",
+            output_path.display(),
+            input_path.display()
+        )),
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn same_file_identity(input_path: &Path, output_path: &Path) -> Result<bool, String> {
+    match fs::metadata(output_path) {
+        Ok(_) => Err(format!(
+            "could not verify that {} is distinct from {} on this platform",
+            output_path.display(),
+            input_path.display()
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!(
+            "could not inspect {}: {error}",
+            output_path.display()
+        )),
+    }
+}
+
 fn save_game(
     loaded: &mut LoadedGame,
     json_format: bool,
@@ -1216,11 +1295,7 @@ fn save_game(
     .map_err(|error| error.to_string())?;
 
     if let Some(output_path) = output_path {
-        let same_path = match (fs::canonicalize(input_path), fs::canonicalize(output_path)) {
-            (Ok(input), Ok(output)) => input == output,
-            _ => input_path == output_path,
-        };
-        if same_path {
+        if same_file(input_path, output_path)? {
             return Err("--out must be different from the input file".to_owned());
         }
         fs::write(output_path, serialized)

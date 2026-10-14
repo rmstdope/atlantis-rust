@@ -607,3 +607,23 @@ fn script_with_one_edit_reports_count_and_out_cannot_overwrite_input() {
         original
     );
 }
+
+#[test]
+fn out_hard_link_cannot_overwrite_input_without_backup() {
+    let directory = TestDirectory::new();
+    let hard_link = directory.path().join("game.link");
+    fs::hard_link(directory.path().join("game.in"), &hard_link).expect("create hard link");
+    let (mut args, _) = region_terrain_example();
+    args.extend(["--out".to_owned(), "game.link".to_owned()]);
+
+    let output = run(&directory, &args);
+
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("output is UTF-8"),
+        "error: --out must be different from the input file. Nothing was changed.\n"
+    );
+    assert_eq!(fs::read(directory.path().join("game.in")).unwrap(), GAME);
+    assert_eq!(fs::read(hard_link).unwrap(), GAME);
+    assert!(!directory.path().join("game.in.bak").exists());
+}
