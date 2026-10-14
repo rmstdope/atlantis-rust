@@ -92,6 +92,7 @@ struct Parser<'a> {
     faction_id: Option<FactionId>,
     unit_stack: Vec<UnitId>,
     indent: i32,
+    ruleset_tables: Option<RulesetTables>,
 }
 
 impl<'a> Parser<'a> {
@@ -104,6 +105,7 @@ impl<'a> Parser<'a> {
             faction_id: None,
             unit_stack: Vec::new(),
             indent: 0,
+            ruleset_tables: None,
         }
     }
 
@@ -747,9 +749,273 @@ impl<'a> Parser<'a> {
             self.store_old_order(raw_line, at_sign, true);
         }
 
-        if let Some(verb @ (OrderVerb::Move | OrderVerb::Advance | OrderVerb::Sail)) = verb {
-            self.parse_movement_order(unit_id, verb, line);
+        match verb {
+            Some(verb @ (OrderVerb::Move | OrderVerb::Advance | OrderVerb::Sail)) => {
+                self.parse_movement_order(unit_id, verb, line);
+            }
+            Some(OrderVerb::Study) => self.parse_study_order(unit_id, line),
+            Some(OrderVerb::Teach) => self.parse_teach_order(unit_id, line),
+            Some(OrderVerb::Forget) => self.parse_forget_order(unit_id, line),
+            Some(OrderVerb::Attack) => self.parse_attack_order(unit_id, line),
+            Some(OrderVerb::Evict) => self.parse_evict_order(unit_id, line),
+            Some(OrderVerb::Steal) => self.parse_steal_order(unit_id, line),
+            Some(OrderVerb::Assassinate) => self.parse_assassinate_order(unit_id, line),
+            Some(OrderVerb::Promote) => self.parse_promote_order(unit_id, line),
+            Some(OrderVerb::Destroy) => self.parse_destroy_order(unit_id),
+            Some(OrderVerb::Enter) => self.parse_enter_order(unit_id, line),
+            Some(OrderVerb::Leave) => self.parse_leave_order(unit_id),
+            _ => {}
         }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessStudyOrder`.
+    fn parse_study_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(skill) = get_token(line) else {
+            self.record_unit_error(unit_id, "STUDY: No skill given.");
+            return;
+        };
+        let skill = crate::defs::skills::parse_skill(&self.ruleset_tables().skills.skills, &skill)
+            .and_then(|skill| i32::try_from(skill).ok())
+            .unwrap_or(-1);
+        let level = get_token(line).map_or(-1, |token| value(&token));
+        let (has_month_order, in_turn_block, is_taxing) = self
+            .game
+            .unit(unit_id)
+            .map(|unit| {
+                (
+                    unit.orders.month_orders.is_some(),
+                    unit.orders.in_turn_block != 0,
+                    matches!(unit.taxing, TAX_TAX | TAX_PILLAGE),
+                )
+            })
+            .unwrap_or((false, false, false));
+        if has_month_order || (self.defs.tax_pillage_month_long != 0 && is_taxing) {
+            self.record_month_order_overwrite(unit_id, "STUDY", in_turn_block);
+        }
+        if let Some(unit) = self.game.unit_mut(unit_id) {
+            if self.defs.tax_pillage_month_long != 0 {
+                unit.taxing = 0;
+            }
+            unit.orders.month_orders = Some(OrderData::Study(super::StudyOrder {
+                skill,
+                days: 0,
+                level,
+                ..super::StudyOrder::default()
+            }));
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessTeachOrder`.
+    fn parse_teach_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let mut order = self
+            .game
+            .unit(unit_id)
+            .and_then(|unit| unit.orders.month_orders.as_ref())
+            .and_then(|order| match order {
+                OrderData::Teach(order) => Some(order.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let mut students = 0;
+        while let Some(target) = super::parse_unit_id(line) {
+            if target.unitnum == -1 {
+                break;
+            }
+            students += 1;
+            order.targets.push(target);
+        }
+        if students == 0 {
+            self.record_unit_error(unit_id, "TEACH: No students given.");
+            return;
+        }
+
+        let (has_other_month_order, in_turn_block, is_taxing) = self
+            .game
+            .unit(unit_id)
+            .map(|unit| {
+                (
+                    unit.orders
+                        .month_orders
+                        .as_ref()
+                        .is_some_and(|order| !matches!(order, OrderData::Teach(_))),
+                    unit.orders.in_turn_block != 0,
+                    matches!(unit.taxing, TAX_TAX | TAX_PILLAGE),
+                )
+            })
+            .unwrap_or((false, false, false));
+        if has_other_month_order || (self.defs.tax_pillage_month_long != 0 && is_taxing) {
+            self.record_month_order_overwrite(unit_id, "TEACH", in_turn_block);
+        }
+
+        if let Some(unit) = self.game.unit_mut(unit_id) {
+            if self.defs.tax_pillage_month_long != 0 {
+                unit.taxing = 0;
+            }
+            unit.orders.month_orders = Some(OrderData::Teach(order));
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessForgetOrder`.
+    fn parse_forget_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(skill) = get_token(line) else {
+            self.record_unit_error(unit_id, "FORGET: No skill given.");
+            return;
+        };
+        let Some(skill) =
+            crate::defs::skills::parse_skill(&self.ruleset_tables().skills.skills, &skill)
+        else {
+            self.record_unit_error(unit_id, "FORGET: Invalid skill.");
+            return;
+        };
+        let skill = i32::try_from(skill).expect("skill index fits in an order field");
+        if self.mode == OrderParseMode::Turn {
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                unit.orders.forget_orders.push(super::ForgetOrder {
+                    skill,
+                    ..super::ForgetOrder::default()
+                });
+            }
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessAttackOrder`.
+    fn parse_attack_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let targets = parse_unit_targets(line);
+        if self.mode == OrderParseMode::Turn && !targets.is_empty() {
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                unit.orders
+                    .attack_orders
+                    .get_or_insert_with(super::AttackOrder::default)
+                    .targets
+                    .extend(targets);
+            }
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessEvictOrder`.
+    fn parse_evict_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let targets = parse_unit_targets(line);
+        if self.mode == OrderParseMode::Turn && !targets.is_empty() {
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                unit.orders
+                    .evict_orders
+                    .get_or_insert_with(super::EvictOrder::default)
+                    .targets
+                    .extend(targets);
+            }
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessStealOrder`.
+    fn parse_steal_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(target) = super::parse_unit_id(line).filter(|target| target.unitnum != -1) else {
+            self.record_unit_error(unit_id, "STEAL: No target given.");
+            return;
+        };
+        let Some(item) = get_token(line) else {
+            self.record_unit_error(unit_id, "STEAL: No item given.");
+            return;
+        };
+        let Some(item) = self
+            .ruleset_tables()
+            .item_families
+            .parse_enabled_item(&item)
+        else {
+            if self.mode == OrderParseMode::Turn {
+                self.record_unit_error(unit_id, "STEAL: Bad item given.");
+            }
+            return;
+        };
+        let item_def = &self.ruleset_tables().item_families.items[item];
+        if item_def.item_type & (ItemTypeFlags::MAN | ItemTypeFlags::MONSTER) != 0 {
+            if self.mode == OrderParseMode::Turn {
+                self.record_unit_error(unit_id, "STEAL: Can't steal that.");
+            }
+            return;
+        }
+        let item = i32::try_from(item).expect("item index fits in an order field");
+        if self.mode == OrderParseMode::Turn {
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                unit.orders.steal_orders = Some(super::StealOrderData::Steal(super::StealOrder {
+                    target: Some(target),
+                    item,
+                    ..super::StealOrder::default()
+                }));
+            }
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessAssassinateOrder`.
+    fn parse_assassinate_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(target) = super::parse_unit_id(line).filter(|target| target.unitnum != -1) else {
+            self.record_unit_error(unit_id, "ASSASSINATE: No target given.");
+            return;
+        };
+        if self.mode == OrderParseMode::Turn {
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                unit.orders.steal_orders = Some(super::StealOrderData::Assassinate(
+                    super::AssassinateOrder {
+                        target: Some(target),
+                        ..super::AssassinateOrder::default()
+                    },
+                ));
+            }
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessPromoteOrder`.
+    fn parse_promote_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(target) = super::parse_unit_id(line).filter(|target| target.unitnum != -1) else {
+            self.record_unit_error(unit_id, "PROMOTE: No target given.");
+            return;
+        };
+        if self.mode == OrderParseMode::Turn {
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                unit.orders.promote = Some(target);
+            }
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessDestroyOrder`.
+    fn parse_destroy_order(&mut self, unit_id: UnitId) {
+        if self.mode == OrderParseMode::Turn {
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                unit.orders.destroy = 1;
+            }
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessEnterOrder`.
+    fn parse_enter_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let object = get_token(line).map_or(0, |token| value(&token));
+        if object == 0 {
+            self.record_unit_error(unit_id, "ENTER: No object specified.");
+            return;
+        }
+        if self.mode == OrderParseMode::Turn {
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                unit.orders.enter = object;
+            }
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessLeaveOrder`.
+    fn parse_leave_order(&mut self, unit_id: UnitId) {
+        if self.mode == OrderParseMode::Turn {
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                if unit.orders.enter == 0 {
+                    unit.orders.enter = -1;
+                }
+            }
+        }
+    }
+
+    fn record_month_order_overwrite(&mut self, unit_id: UnitId, verb: &str, delayed: bool) {
+        let delayed = if delayed { "DELAYED " } else { "" };
+        self.record_unit_error(
+            unit_id,
+            &format!("{verb}: Overwriting previous {delayed}month-long order."),
+        );
     }
 
     /// C++: `parseorders.cpp` `Game::ProcessAdvanceOrder`, `ProcessMoveOrder`, and `ProcessSailOrder`.
@@ -970,6 +1236,19 @@ impl<'a> Parser<'a> {
         self.unit_stack.last().copied()
     }
 
+    fn ruleset_tables(&mut self) -> &RulesetTables {
+        if self.ruleset_tables.is_none() {
+            self.ruleset_tables = Some(
+                <dyn Ruleset>::from_name(self.defs.ruleset_name)
+                    .expect("parser ruleset is supported")
+                    .tables(),
+            );
+        }
+        self.ruleset_tables
+            .as_ref()
+            .expect("ruleset tables were initialized")
+    }
+
     fn record_unit_error(&mut self, unit_id: UnitId, message: &str) {
         let (faction_id, name) = self
             .game
@@ -1021,6 +1300,17 @@ impl<'a> Parser<'a> {
             });
         }
     }
+}
+
+fn parse_unit_targets(line: &mut String) -> Vec<super::OrderUnitId> {
+    let mut targets = Vec::new();
+    while let Some(target) = super::parse_unit_id(line) {
+        if target.unitnum == -1 {
+            break;
+        }
+        targets.push(target);
+    }
+    targets
 }
 
 /// C++: `parseorders.cpp` `Game::ParseDir`.
@@ -1336,6 +1626,413 @@ mod tests {
     use crate::ruleset::Ruleset;
 
     #[test]
+    fn study_parses_skill_and_optional_level_and_replaces_month_order() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let tables = ruleset.tables();
+        let combat = crate::defs::skills::parse_skill(&tables.skills.skills, "COMB").unwrap();
+        let riding = crate::defs::skills::parse_skill(&tables.skills.skills, "RIDI").unwrap();
+        let (mut game, faction_id, object_id, unit_id) = game_with_unit();
+        let second_unit = game
+            .add_unit(object_id, Unit::new(11, Some(faction_id), 1, 5))
+            .unwrap();
+        let unknown_skill_unit = game
+            .add_unit(object_id, Unit::new(12, Some(faction_id), 1, 5))
+            .unwrap();
+        game.setup_unit_nums().unwrap();
+
+        let result = parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nmove north\nstudy COMB 3\nunit 11\nstudy RIDI\nstudy\nunit 12\nstudy not-a-skill\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert!(result.errors.is_empty());
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            [
+                "Unit (10): STUDY: Overwriting previous month-long order.",
+                "Unit (11): STUDY: No skill given."
+            ]
+        );
+        match &game.unit(unit_id).unwrap().orders.month_orders {
+            Some(OrderData::Study(order)) => {
+                assert_eq!(order.skill, i32::try_from(combat).unwrap());
+                assert_eq!(order.days, 0);
+                assert_eq!(order.level, 3);
+            }
+            other => panic!("expected STUDY order, got {other:?}"),
+        }
+        match &game.unit(second_unit).unwrap().orders.month_orders {
+            Some(OrderData::Study(order)) => {
+                assert_eq!(order.skill, i32::try_from(riding).unwrap());
+                assert_eq!(order.days, 0);
+                assert_eq!(order.level, -1);
+            }
+            other => panic!("expected STUDY order, got {other:?}"),
+        }
+        let unknown_skill = match &game.unit(unknown_skill_unit).unwrap().orders.month_orders {
+            Some(OrderData::Study(order)) => order,
+            other => panic!("expected STUDY order, got {other:?}"),
+        };
+        assert_eq!(unknown_skill.skill, -1);
+        assert_eq!(unknown_skill.level, -1);
+    }
+
+    #[test]
+    fn teach_requires_students_and_appends_to_matching_month_order() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let (mut game, faction_id, _, unit_id) = game_with_unit();
+
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nmove north\nteach 11\nteach 12\nteach\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            [
+                "Unit (10): TEACH: Overwriting previous month-long order.",
+                "Unit (10): TEACH: No students given."
+            ]
+        );
+        match &game.unit(unit_id).unwrap().orders.month_orders {
+            Some(OrderData::Teach(order)) => assert_eq!(
+                order.targets,
+                [
+                    crate::orders::OrderUnitId {
+                        unitnum: 11,
+                        alias: 0,
+                        faction: 0
+                    },
+                    crate::orders::OrderUnitId {
+                        unitnum: 12,
+                        alias: 0,
+                        faction: 0
+                    }
+                ]
+            ),
+            other => panic!("expected TEACH order, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forget_requires_valid_skill_and_appends_orders() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let tables = ruleset.tables();
+        let combat =
+            i32::try_from(crate::defs::skills::parse_skill(&tables.skills.skills, "COMB").unwrap())
+                .unwrap();
+        let riding =
+            i32::try_from(crate::defs::skills::parse_skill(&tables.skills.skills, "RIDI").unwrap())
+                .unwrap();
+        let (mut game, faction_id, _, unit_id) = game_with_unit();
+
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nforget COMB\nforget RIDI\nforget\nforget not-a-skill\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            [
+                "Unit (10): FORGET: No skill given.",
+                "Unit (10): FORGET: Invalid skill."
+            ]
+        );
+        assert_eq!(
+            game.unit(unit_id)
+                .unwrap()
+                .orders
+                .forget_orders
+                .iter()
+                .map(|order| order.skill)
+                .collect::<Vec<_>>(),
+            [combat, riding]
+        );
+    }
+
+    #[test]
+    fn attack_appends_targets_in_order() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let (mut game, _, _, unit_id) = game_with_unit();
+
+        let result = parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nattack 11 faction 8 new 3\nattack 12\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert!(result.errors.is_empty());
+        let targets = &game
+            .unit(unit_id)
+            .unwrap()
+            .orders
+            .attack_orders
+            .as_ref()
+            .expect("ATTACK targets were stored")
+            .targets;
+        assert_eq!(
+            targets,
+            &[
+                crate::orders::OrderUnitId {
+                    unitnum: 11,
+                    alias: 0,
+                    faction: 0
+                },
+                crate::orders::OrderUnitId {
+                    unitnum: 0,
+                    alias: 3,
+                    faction: 8
+                },
+                crate::orders::OrderUnitId {
+                    unitnum: 12,
+                    alias: 0,
+                    faction: 0
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn evict_appends_targets_in_order() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let (mut game, _, _, unit_id) = game_with_unit();
+
+        let result = parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nevict 11\nevict 12\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert!(result.errors.is_empty());
+        let targets = &game
+            .unit(unit_id)
+            .unwrap()
+            .orders
+            .evict_orders
+            .as_ref()
+            .expect("EVICT targets were stored")
+            .targets;
+        assert_eq!(
+            targets,
+            &[
+                crate::orders::OrderUnitId {
+                    unitnum: 11,
+                    alias: 0,
+                    faction: 0
+                },
+                crate::orders::OrderUnitId {
+                    unitnum: 12,
+                    alias: 0,
+                    faction: 0
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn steal_requires_target_and_stealable_item() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let tables = ruleset.tables();
+        let silver = i32::try_from(
+            tables
+                .item_families
+                .parse_enabled_item("SILV")
+                .expect("silver is enabled"),
+        )
+        .unwrap();
+        let (mut game, faction_id, _, unit_id) = game_with_unit();
+
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nsteal\nsteal 11\nsteal 11 not-an-item\nsteal 11 SILV\nsteal 12 LEAD\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            [
+                "Unit (10): STEAL: No target given.",
+                "Unit (10): STEAL: No item given.",
+                "Unit (10): STEAL: Bad item given.",
+                "Unit (10): STEAL: Can't steal that."
+            ]
+        );
+        match game.unit(unit_id).unwrap().orders.steal_orders.as_ref() {
+            Some(super::super::StealOrderData::Steal(order)) => {
+                assert_eq!(
+                    order.target,
+                    Some(crate::orders::OrderUnitId {
+                        unitnum: 11,
+                        alias: 0,
+                        faction: 0
+                    })
+                );
+                assert_eq!(order.item, silver);
+            }
+            other => panic!("expected STEAL order, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assassinate_requires_target_and_replaces_steal_order() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let (mut game, faction_id, _, unit_id) = game_with_unit();
+
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nsteal 11 SILV\nassassinate 0\nassassinate 12\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            ["Unit (10): ASSASSINATE: No target given."]
+        );
+        match game.unit(unit_id).unwrap().orders.steal_orders.as_ref() {
+            Some(super::super::StealOrderData::Assassinate(order)) => {
+                assert_eq!(
+                    order.target,
+                    Some(crate::orders::OrderUnitId {
+                        unitnum: 12,
+                        alias: 0,
+                        faction: 0
+                    })
+                );
+            }
+            other => panic!("expected ASSASSINATE order, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn promote_requires_target_and_replaces_previous_target() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let (mut game, faction_id, _, unit_id) = game_with_unit();
+
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\npromote 0\npromote 11\npromote 12\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            ["Unit (10): PROMOTE: No target given."]
+        );
+        assert_eq!(
+            game.unit(unit_id).unwrap().orders.promote,
+            Some(crate::orders::OrderUnitId {
+                unitnum: 12,
+                alias: 0,
+                faction: 0
+            })
+        );
+    }
+
+    #[test]
+    fn destroy_sets_destroy_flag() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let (mut game, _, _, unit_id) = game_with_unit();
+
+        let result = parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\ndestroy\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert!(result.errors.is_empty());
+        assert_eq!(game.unit(unit_id).unwrap().orders.destroy, 1);
+    }
+
+    #[test]
+    fn enter_requires_object_number() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let (mut game, faction_id, _, unit_id) = game_with_unit();
+
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nenter\nenter 7\nenter invalid\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            [
+                "Unit (10): ENTER: No object specified.",
+                "Unit (10): ENTER: No object specified."
+            ]
+        );
+        assert_eq!(game.unit(unit_id).unwrap().orders.enter, 7);
+    }
+
+    #[test]
+    fn leave_does_not_override_enter() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let (mut game, faction_id, object_id, entering_unit) = game_with_unit();
+        let leaving_unit = game
+            .add_unit(object_id, Unit::new(11, Some(faction_id), 1, 5))
+            .unwrap();
+        game.setup_unit_nums().unwrap();
+
+        let result = parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nenter 7\nleave\nunit 11\nleave\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert!(result.errors.is_empty());
+        assert_eq!(game.unit(entering_unit).unwrap().orders.enter, 7);
+        assert_eq!(game.unit(leaving_unit).unwrap().orders.enter, -1);
+    }
+
+    #[test]
+    fn check_mode_tracks_study_and_teach_overwrites() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let (mut game, _, _, unit_id) = game_with_unit();
+
+        let result = parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nstudy COMB\nstudy RIDI\nteach 11\nteach 12\nsteal 13 not-an-item\n#end\n",
+            OrderParseMode::Check,
+        )
+        .unwrap();
+
+        assert_eq!(
+            result.errors,
+            [
+                "STUDY: Overwriting previous month-long order.",
+                "TEACH: Overwriting previous month-long order."
+            ]
+        );
+        assert!(game.unit(unit_id).unwrap().orders.month_orders.is_none());
+    }
+
+    #[test]
     fn default_work_runs_after_each_real_order_file() {
         let (mut game, faction_id, work_unit, other_work_unit, ordered_unit, npc_unit, nexus_unit) =
             default_work_game();
@@ -1471,6 +2168,13 @@ mod tests {
                         $turn,
                         "/orders.3"
                     )),
+                    include_str!(concat!(
+                        "../../../../fixtures/",
+                        $ruleset,
+                        "/turn_",
+                        $turn,
+                        "/report.3"
+                    )),
                 )
             };
         }
@@ -1506,7 +2210,7 @@ mod tests {
             fixture!("neworigins", "13"),
         ];
 
-        for (ruleset_name, turn, game_input, orders_input) in fixtures {
+        for (ruleset_name, turn, game_input, orders_input, expected_report) in fixtures {
             let mut loaded = crate::save::load_legacy(game_input)
                 .unwrap_or_else(|error| panic!("{ruleset_name} turn {turn}: {error}"));
             let original_errors = loaded
@@ -1534,11 +2238,13 @@ mod tests {
             for (faction_id, faction_number, error_count) in original_errors {
                 let faction = loaded.game.faction(faction_id).unwrap();
                 let new_errors = &faction.errors[error_count..];
-                assert!(
-                    new_errors.is_empty(),
-                    "unexpected parser errors for faction {faction_number} in \
-                     {ruleset_name} turn {turn}: {new_errors:?}"
-                );
+                for error in new_errors {
+                    assert!(
+                        expected_report.lines().any(|line| line == error),
+                        "unexpected parser error for faction {faction_number} in \
+                         {ruleset_name} turn {turn}: {error:?}"
+                    );
+                }
             }
         }
     }
