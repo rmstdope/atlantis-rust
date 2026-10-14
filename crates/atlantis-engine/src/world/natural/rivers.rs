@@ -307,22 +307,48 @@ fn water_body_distances(
     for (source_index, source) in water_bodies.iter().enumerate() {
         let mut blocked = inner_water.clone();
         blocked.extend(source.regions.iter().copied());
-        for &start in &source.regions {
-            if inner_water.contains(&start) {
+        let starts: Vec<_> = source
+            .regions
+            .iter()
+            .copied()
+            .filter(|region_id| !inner_water.contains(region_id))
+            .collect();
+        let found = unweighted_distances_from_sources(game, &starts, &blocked);
+        for (region_id, distance) in found {
+            let Some(&target_index) = body_by_region.get(&region_id) else {
                 continue;
-            }
-            let (found, _) = dijkstra_all(game, start, &blocked, |_, _| 1);
-            for (region_id, (distance, _)) in found {
-                let Some(&target_index) = body_by_region.get(&region_id) else {
-                    continue;
-                };
-                if target_index == source_index {
-                    continue;
-                }
-                let new_distance = (distance + 1) as i32;
+            };
+            if target_index != source_index {
+                let new_distance = distance + 1;
                 distances[source_index][target_index] =
                     distances[source_index][target_index].min(new_distance);
             }
+        }
+    }
+    distances
+}
+
+fn unweighted_distances_from_sources(
+    game: &Game,
+    sources: &[RegionId],
+    blocked: &BTreeSet<RegionId>,
+) -> BTreeMap<RegionId, i32> {
+    let mut distances = BTreeMap::new();
+    let mut pending = VecDeque::new();
+    for &source in sources {
+        if distances.insert(source, 0).is_none() {
+            pending.push_back(source);
+        }
+    }
+    while let Some(current) = pending.pop_front() {
+        let next_distance = distances[&current] + 1;
+        let neighbors = game.region(current).expect("path region exists").neighbors;
+        for next in neighbors.into_iter().flatten() {
+            if blocked.contains(&next) || distances.contains_key(&next) {
+                continue;
+            }
+            distances.insert(next, next_distance);
+            pending.push_back(next);
         }
     }
     distances
@@ -586,6 +612,37 @@ mod tests {
         assert_eq!(path.first(), Some(&start));
         assert_eq!(path.last(), Some(&goal));
         assert!(!path.contains(&unrelated));
+    }
+
+    #[test]
+    fn unit_distances_from_multiple_sources_match_single_source_searches() {
+        let (mut game, array) = surface();
+        for region_id in game.region_ids().to_vec() {
+            game.region_mut(region_id).unwrap().terrain_type = Some(R_PLAIN);
+        }
+        let sources = [
+            array.get_region(0, 0).expect("first source exists"),
+            array.get_region(4, 4).expect("second source exists"),
+        ];
+        let blocked = BTreeSet::from([
+            sources[0],
+            sources[1],
+            array.get_region(3, 3).expect("blocked region exists"),
+        ]);
+        let mut expected = std::collections::BTreeMap::new();
+        for source in sources {
+            let (found, _) = super::dijkstra_all(&game, source, &blocked, |_, _| 1);
+            for (region_id, (distance, _)) in found {
+                expected
+                    .entry(region_id)
+                    .and_modify(|known: &mut i32| *known = (*known).min(distance as i32))
+                    .or_insert(distance as i32);
+            }
+        }
+
+        let actual = super::unweighted_distances_from_sources(&game, &sources, &blocked);
+
+        assert_eq!(actual, expected);
     }
 
     #[test]
