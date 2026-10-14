@@ -1,6 +1,6 @@
 --- a/main.cpp
 +++ b/main.cpp
-@@ -31,7 +31,720 @@
+@@ -31,7 +31,733 @@
  #include "items.h"
  #include "skills.h"
  #include "gamedata.h"
@@ -676,6 +676,19 @@
 +	}
 +}
 +
++int DumpSkillTables()
++{
++	dumpSkills();
++	dumpHealing("healing", HealDefs, 7);
++	dumpHealing("magic_healing", MagicHealDefs, 6);
++	dumpSpecials();
++	dumpEffects();
++	dumpRanges();
++	dumpAttributes();
++	std::cout.flush();
++	return std::cout ? 0 : 1;
++}
++
 +}
 +
 +int DumpTables()
@@ -721,13 +734,19 @@
  void usage()
  {
  	Awrite("atlantis new");
-@@ -52,6 +765,21 @@
+@@ -52,6 +778,28 @@
  
  	initIO();
-
 +	if (argc == 2 && AString(argv[1]) == "dump-item-families-default") {
 +		int result = DumpItemFamilyDefaults();
 +		if (result != 0) std::cerr << "Unable to write default item-family tables\n";
++		doneIO();
++		return result;
++	}
++
++	if (argc == 2 && AString(argv[1]) == "dump-skill-tables") {
++		int result = DumpSkillTables();
++		if (result != 0) std::cerr << "Unable to write base skill-family tables\n";
 +		doneIO();
 +		return result;
 +	}
