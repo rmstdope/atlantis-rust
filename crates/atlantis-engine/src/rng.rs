@@ -1,17 +1,48 @@
+use serde::{Deserialize, Serialize};
+
 const RANDSIZ: usize = 1 << 8;
 const GOLDEN_RATIO: u64 = 0x9e37_79b9;
 
+mod rng_words {
+    use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
+
+    use super::RANDSIZ;
+
+    pub fn serialize<S>(words: &[u64; RANDSIZ], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        words.as_slice().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u64; RANDSIZ], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let words = Vec::<u64>::deserialize(deserializer)?;
+        let length = words.len();
+        words
+            .try_into()
+            .map_err(|_| de::Error::invalid_length(length, &"256 RNG words"))
+    }
+}
+
 /// Per-instance LP64 ISAAC state used by the original Atlantis engine.
+#[derive(Deserialize, Serialize)]
 pub struct Rng {
     randcnt: u64,
+    #[serde(with = "rng_words")]
     randrsl: [u64; RANDSIZ],
+    #[serde(with = "rng_words")]
     randmem: [u64; RANDSIZ],
     randa: u64,
     randb: u64,
     randc: u64,
     #[cfg(feature = "rng-trace")]
+    #[serde(skip)]
     trace_sequence: u64,
     #[cfg(feature = "rng-trace")]
+    #[serde(skip)]
     trace_records: Vec<(u64, i32, i32)>,
 }
 

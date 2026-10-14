@@ -122,6 +122,21 @@ Input keys: `Faction: <n>` or `Faction: new [noleader] [x y z]`, `Name:`, `Rewar
 Output per faction (`WriteFacInfo`): `Faction`, `Name`, `Email`, `Password`, `LastOrders`,
 `FirstTurn`, `SendTimes`, `Template`, `Battle: na`, then pass-through lines.
 
+## JSON game saves
+
+The engine also accepts a serde JSON representation of the complete in-memory game. Its top-level
+object contains:
+
+- `schema_version`: integer `1` for this schema. A reader rejects other versions; incompatible
+  schema changes require a new version.
+- `ruleset`: the canonical supported ruleset name (`Wyreth` or `NewOrigins`).
+- `seed`: the legacy save seed.
+- `game`: the complete model, including arena slots and ordered membership lists.
+- `rng`: the current ISAAC generator state, so saving and resuming JSON does not rewind randomness.
+
+JSON saves are read by the shared loader when the first non-whitespace character is `{`; other
+inputs use the legacy positional reader.
+
 ## Porting notes
 
 Target: `crates/atlantis-engine/src/save/` (legacy reader/writer and serde JSON) and

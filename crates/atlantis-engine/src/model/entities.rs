@@ -1,23 +1,25 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::{Deserialize, Serialize};
+
 use crate::defs::{self, ItemId, TerrainId};
 
 use super::{FactionId, ObjectId, RegionId, UnitId};
 use super::{ItemList, SkillList};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FactionItemShow {
     pub item_type: ItemId,
     pub full: bool,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FactionSkillShow {
     pub skill_type: usize,
     pub level: i32,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Faction {
     pub num: i32,
     pub faction_types: Vec<(String, i32)>,
@@ -127,26 +129,26 @@ impl Faction {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[repr(i32)]
 pub enum FactionActivity {
     Tax = 1,
     Trade = 2,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FactionActivityRecord {
     pub region: RegionId,
     pub activities: Vec<FactionActivity>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Attitude {
     pub faction_num: i32,
     pub attitude: i32,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Quest {
     pub quest_type: i32,
     pub target: i32,
@@ -175,7 +177,7 @@ impl Default for Quest {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct TownInfo {
     pub name: Option<String>,
     pub population: i32,
@@ -184,14 +186,14 @@ pub struct TownInfo {
     pub development: i32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[repr(i32)]
 pub enum MarketType {
     Buy = 0,
     Sell = 1,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Market {
     pub market_type: MarketType,
     pub item: i32,
@@ -222,7 +224,7 @@ impl Default for Market {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Production {
     pub item_type: i32,
     pub base_amount: i32,
@@ -232,7 +234,7 @@ pub struct Production {
     pub activity: i32,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Region {
     pub name: String,
     pub num: i32,
@@ -353,7 +355,7 @@ impl Region {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Object {
     pub name: Option<String>,
     pub describe: Option<String>,
@@ -429,7 +431,7 @@ impl Object {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[repr(i32)]
 pub enum UnitType {
     #[default]
@@ -441,7 +443,7 @@ pub enum UnitType {
     Apprentice = 5,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[repr(i32)]
 pub enum GuardMode {
     #[default]
@@ -452,7 +454,7 @@ pub enum GuardMode {
     Advance = 4,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Unit {
     pub name: Option<String>,
     pub describe: Option<String>,

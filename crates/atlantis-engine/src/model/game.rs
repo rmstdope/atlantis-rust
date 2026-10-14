@@ -1,7 +1,9 @@
+use serde::{Deserialize, Serialize};
+
 use super::entities::{Faction, Object, Quest, Region, Unit};
 use super::{FactionId, ObjectId, RegionId, UnitId};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[repr(i32)]
 pub enum RegionLevelType {
     Nexus = 0,
@@ -10,7 +12,7 @@ pub enum RegionLevelType {
     Underdeep = 3,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct RegionArray {
     pub x: i32,
     pub y: i32,
@@ -144,7 +146,7 @@ pub enum UnitNumberingIssue {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Game {
     factions: Vec<Option<Faction>>,
     faction_ids: Vec<FactionId>,

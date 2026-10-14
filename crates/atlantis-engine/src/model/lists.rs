@@ -1,6 +1,8 @@
+use serde::{Deserialize, Serialize};
+
 use crate::defs::ItemId;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Item {
     pub item_type: ItemId,
     pub num: i32,
@@ -8,7 +10,7 @@ pub struct Item {
     pub checked: bool,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ItemList {
     entries: Vec<Item>,
 }
@@ -52,14 +54,14 @@ impl ItemList {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct Skill {
     pub skill_type: usize,
     pub days: u32,
     pub exp: u32,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct SkillList {
     entries: Vec<Skill>,
 }

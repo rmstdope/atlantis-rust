@@ -1,6 +1,20 @@
+use serde::{Deserialize, Serialize};
+
 macro_rules! define_id {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[derive(
+            Clone,
+            Copy,
+            Debug,
+            Default,
+            Deserialize,
+            Eq,
+            Hash,
+            Ord,
+            PartialEq,
+            PartialOrd,
+            Serialize,
+        )]
         pub struct $name(usize);
 
         impl $name {
