@@ -11,15 +11,32 @@ use crate::text::{get_at, get_token, is_equal, value, TextInput};
 
 use super::{
     parse_order_verb, parse_unit_id, BuildOrder, BuyOrder, CastIntOrder, CastMindOrder, CastOrder,
-    CastOrderData, CastRegionOrder, CastTransmuteOrder, CastUnitsOrder, ExchangeOrder, GiveOrder,
-    JoinOrder, MoveDir, MoveOrder, OrderData, OrderVerb, ProduceOrder, SailOrder, SellOrder,
-    TeleportOrder, TransportOrder, TurnOrder, WithdrawOrder,
+    CastOrderData, CastRegionOrder, CastTransmuteOrder, CastUnitsOrder, ExchangeOrder, FindOrder,
+    GiveOrder, IdleOrder, JoinOrder, MoveDir, MoveOrder, OrderData, OrderVerb, ProduceOrder,
+    SailOrder, SellOrder, TeleportOrder, TransportOrder, TurnOrder, WithdrawOrder,
 };
 
 const FLAG_AUTOTAX: i32 = 0x0004;
+const FLAG_BEHIND: i32 = 0x0001;
+const FLAG_NOCROSS_WATER: i32 = 0x0002;
+const FLAG_HOLDING: i32 = 0x0008;
+const FLAG_NOAID: i32 = 0x0010;
+const FLAG_CONSUMING_UNIT: i32 = 0x0040;
+const FLAG_CONSUMING_FACTION: i32 = 0x0080;
+const FLAG_NOSPOILS: i32 = 0x0100;
+const FLAG_FLYSPOILS: i32 = 0x0200;
+const FLAG_WALKSPOILS: i32 = 0x0400;
+const FLAG_RIDESPOILS: i32 = 0x0800;
+const FLAG_SHARING: i32 = 0x1000;
+const FLAG_SWIMSPOILS: i32 = 0x2000;
+const FLAG_SAILSPOILS: i32 = 0x4000;
 const TAX_NONE: i32 = 0;
 const TAX_TAX: i32 = 1;
 const TAX_PILLAGE: i32 = 2;
+const TAX_AUTO: i32 = 3;
+const QUIT_BY_ORDER: i32 = 1;
+const QUIT_AND_RESTART: i32 = 3;
+const TEMPLATE_MAP: i32 = 3;
 const GENERIC_CAST_SPELL_NAMES: &[&str] = &[
     "construct portal",
     "enchant swords",
@@ -60,7 +77,6 @@ const GENERIC_CAST_SPELL_NAMES: &[&str] = &[
     "blasphemous ritual",
     "phantasmal entertainment",
 ];
-const TAX_AUTO: i32 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OrderParseMode {
@@ -139,7 +155,9 @@ struct Parser<'a> {
     result: OrderParseResult,
     faction_id: Option<FactionId>,
     unit_stack: Vec<UnitId>,
+    check_unit_states: Vec<(UnitId, i32, i32)>,
     indent: i32,
+    check_show_count: i32,
 }
 
 impl<'a> Parser<'a> {
@@ -157,7 +175,9 @@ impl<'a> Parser<'a> {
             result: OrderParseResult::default(),
             faction_id: None,
             unit_stack: Vec::new(),
+            check_unit_states: Vec::new(),
             indent: 0,
+            check_show_count: 0,
         }
     }
 
@@ -313,6 +333,9 @@ impl<'a> Parser<'a> {
     }
 
     fn atlantis(&mut self, line: &mut String) -> Result<(), OrderParseError> {
+        if self.mode == OrderParseMode::Check {
+            self.check_show_count = 0;
+        }
         if self.faction_id.is_some() {
             self.record_error(self.faction_id, None, "No #END statement given.");
         }
@@ -422,6 +445,17 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(unit_id) = self.current_unit() {
+            if self.mode == OrderParseMode::Check
+                && !self
+                    .check_unit_states
+                    .iter()
+                    .any(|(saved_id, _, _)| *saved_id == unit_id)
+            {
+                if let Some(unit) = self.game.unit(unit_id) {
+                    self.check_unit_states
+                        .push((unit_id, unit.reveal, unit.taxing));
+                }
+            }
             if let Some(unit) = self.game.unit_mut(unit_id) {
                 if self.mode == OrderParseMode::Check {
                     unit.orders.month_orders = None;
@@ -805,6 +839,10 @@ impl<'a> Parser<'a> {
         }
         if self.mode == OrderParseMode::Turn {
             self.store_old_order(raw_line, at_sign, true);
+        }
+
+        if self.parse_instant_flag_order(unit_id, verb, line) {
+            return;
         }
 
         match verb {
@@ -1637,6 +1675,1603 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// C++: `parseorders.cpp` `Game::Process{Guard,Behind,Noaid,Spoils,Nocross,Hold,AutoTax,Avoid,Share}Order`.
+    fn parse_instant_flag_order(
+        &mut self,
+        unit_id: UnitId,
+        verb: Option<OrderVerb>,
+        line: &mut String,
+    ) -> bool {
+        let Some(verb) = verb else {
+            return false;
+        };
+        match verb {
+            OrderVerb::Prepare if self.defs.use_prepare_command == 0 => {
+                self.record_unit_error(unit_id, "PREPARE is not a valid order.");
+                return true;
+            }
+            OrderVerb::Weapon if self.defs.use_weapon_armor_command == 0 => {
+                self.record_unit_error(unit_id, "WEAPON is not a valid order.");
+                return true;
+            }
+            OrderVerb::Armor if self.defs.use_weapon_armor_command == 0 => {
+                self.record_unit_error(unit_id, "ARMOR is not a valid order.");
+                return true;
+            }
+            OrderVerb::Find if self.defs.have_email_special_commands == 0 => {
+                self.record_unit_error(unit_id, "FIND: This command was disabled.");
+                return true;
+            }
+            OrderVerb::Faction
+                if self.defs.faction_limit_type
+                    != crate::defs::enums::flags::FACLIM_FACTION_TYPES =>
+            {
+                self.record_unit_error(
+                    unit_id,
+                    "FACTION: Invalid order, no faction types in this game.",
+                );
+                return true;
+            }
+            _ => {}
+        }
+
+        match verb {
+            OrderVerb::Guard | OrderVerb::Avoid => {
+                let label = if verb == OrderVerb::Guard {
+                    "GUARD"
+                } else {
+                    "AVOID"
+                };
+                let Some(value) = self.parse_tf_order(unit_id, line, label) else {
+                    return true;
+                };
+                if self.mode == OrderParseMode::Turn {
+                    if let Some(unit) = self.game.unit_mut(unit_id) {
+                        if verb == OrderVerb::Guard {
+                            if value == 0 {
+                                if unit.guard != crate::model::GuardMode::Avoid {
+                                    unit.guard = crate::model::GuardMode::None;
+                                }
+                            } else if unit.guard != crate::model::GuardMode::Guard {
+                                unit.guard = crate::model::GuardMode::Set;
+                            }
+                        } else if value == 1 {
+                            unit.guard = crate::model::GuardMode::Avoid;
+                        } else if unit.guard == crate::model::GuardMode::Avoid {
+                            unit.guard = crate::model::GuardMode::None;
+                        }
+                    }
+                }
+                true
+            }
+            OrderVerb::Behind => {
+                if let Some(value) = self.parse_tf_order(unit_id, line, "BEHIND") {
+                    self.set_unit_flag(unit_id, FLAG_BEHIND, value != 0);
+                }
+                true
+            }
+            OrderVerb::Autotax => {
+                if let Some(value) = self.parse_tf_order(unit_id, line, "AUTOTAX") {
+                    self.set_unit_flag(unit_id, FLAG_AUTOTAX, value != 0);
+                }
+                true
+            }
+            OrderVerb::Hold => {
+                if let Some(value) = self.parse_tf_order(unit_id, line, "HOLD") {
+                    self.set_unit_flag(unit_id, FLAG_HOLDING, value != 0);
+                }
+                true
+            }
+            OrderVerb::NoAid => {
+                if let Some(value) = self.parse_tf_order(unit_id, line, "NOAID") {
+                    self.set_unit_flag(unit_id, FLAG_NOAID, value != 0);
+                }
+                true
+            }
+            OrderVerb::Share => {
+                if let Some(value) = self.parse_tf_order(unit_id, line, "SHARE") {
+                    self.set_unit_flag(unit_id, FLAG_SHARING, value != 0);
+                }
+                true
+            }
+            OrderVerb::NoCross => {
+                if !self.nocross_is_available() {
+                    self.record_unit_error(unit_id, "NOCROSS is not a valid order.");
+                    return true;
+                }
+                if let Some(value) = self.parse_tf_order(unit_id, line, "NOCROSS") {
+                    self.set_unit_flag(unit_id, FLAG_NOCROSS_WATER, value != 0);
+                }
+                true
+            }
+            OrderVerb::Consume => {
+                let value = get_token(line);
+                let flags = match value.as_deref() {
+                    None => Some((false, false)),
+                    Some(token) if is_equal(token, "none") => Some((false, false)),
+                    Some(token) if is_equal(token, "unit") => Some((true, false)),
+                    Some(token) if is_equal(token, "faction") => Some((false, true)),
+                    _ => None,
+                };
+                match flags {
+                    Some((unit, faction)) => {
+                        if self.mode == OrderParseMode::Turn {
+                            self.set_unit_flag(unit_id, FLAG_CONSUMING_UNIT, unit);
+                            self.set_unit_flag(unit_id, FLAG_CONSUMING_FACTION, faction);
+                        }
+                    }
+                    None => self.record_unit_error(unit_id, "CONSUME: Invalid value."),
+                }
+                true
+            }
+            OrderVerb::Reveal => {
+                let value = get_token(line);
+                let reveal = match value.as_deref() {
+                    None => Some(0),
+                    Some(token) if is_equal(token, "unit") => Some(1),
+                    Some(token) if is_equal(token, "faction") => Some(2),
+                    Some(token) if is_equal(token, "none") => Some(0),
+                    _ => None,
+                };
+                match reveal {
+                    Some(reveal) => {
+                        if self.mode == OrderParseMode::Turn {
+                            if let Some(unit) = self.game.unit_mut(unit_id) {
+                                unit.reveal = reveal;
+                            }
+                        }
+                    }
+                    None => self.record_unit_error(unit_id, "REVEAL: Invalid value."),
+                }
+                true
+            }
+            OrderVerb::Spoils => {
+                let mut selected = None;
+                let mut enabled = true;
+                if let Some(token) = get_token(line) {
+                    let parsed = if is_equal(&token, "none") {
+                        Some(FLAG_NOSPOILS)
+                    } else if is_equal(&token, "walk") {
+                        Some(FLAG_WALKSPOILS)
+                    } else if is_equal(&token, "ride") {
+                        Some(FLAG_RIDESPOILS)
+                    } else if is_equal(&token, "fly") {
+                        Some(FLAG_FLYSPOILS)
+                    } else if is_equal(&token, "swim") {
+                        Some(FLAG_SWIMSPOILS)
+                    } else if is_equal(&token, "sail") {
+                        Some(FLAG_SAILSPOILS)
+                    } else if is_equal(&token, "all") {
+                        enabled = false;
+                        None
+                    } else {
+                        self.record_unit_error(unit_id, "SPOILS: Bad argument.");
+                        None
+                    };
+                    selected = parsed;
+                }
+                if self.mode == OrderParseMode::Turn {
+                    for flag in [
+                        FLAG_NOSPOILS,
+                        FLAG_WALKSPOILS,
+                        FLAG_RIDESPOILS,
+                        FLAG_FLYSPOILS,
+                        FLAG_SWIMSPOILS,
+                        FLAG_SAILSPOILS,
+                    ] {
+                        self.set_unit_flag(unit_id, flag, false);
+                    }
+                    if let Some(flag) = selected {
+                        self.set_unit_flag(unit_id, flag, enabled);
+                    }
+                }
+                true
+            }
+            OrderVerb::NoSpoils => {
+                self.record_unit_error(
+                    unit_id,
+                    "NOSPOILS: This command is deprecated.  Use the 'SPOILS' command instead",
+                );
+                let Some(token) = get_token(line) else {
+                    self.record_unit_error(unit_id, "NOSPOILS: Invalid value.");
+                    return true;
+                };
+                let value = parse_tf(&token);
+                if value == -1 {
+                    self.record_unit_error(unit_id, "NOSPILS: Invalid value.");
+                    return true;
+                }
+                if self.mode == OrderParseMode::Turn {
+                    self.set_unit_flag(unit_id, FLAG_FLYSPOILS, false);
+                    self.set_unit_flag(unit_id, FLAG_RIDESPOILS, false);
+                    self.set_unit_flag(unit_id, FLAG_WALKSPOILS, false);
+                    self.set_unit_flag(unit_id, FLAG_NOSPOILS, value != 0);
+                }
+                true
+            }
+            OrderVerb::Find => {
+                let Some(token) = get_token(line) else {
+                    self.record_unit_error(unit_id, "FIND: No faction number given.");
+                    return true;
+                };
+                let find = value(&token);
+                if find == 0 && !is_equal(&token, "all") {
+                    self.record_unit_error(unit_id, "FIND: No faction number given.");
+                    return true;
+                }
+                if self.mode == OrderParseMode::Turn {
+                    if let Some(unit) = self.game.unit_mut(unit_id) {
+                        unit.orders.find_orders.push(FindOrder {
+                            find,
+                            ..FindOrder::default()
+                        });
+                    }
+                }
+                true
+            }
+            OrderVerb::Idle => {
+                let (has_month_order, in_turn_block, is_taxing) = self
+                    .game
+                    .unit(unit_id)
+                    .map(|unit| {
+                        (
+                            unit.orders.month_orders.is_some(),
+                            unit.orders.in_turn_block != 0,
+                            matches!(unit.taxing, TAX_TAX | TAX_PILLAGE),
+                        )
+                    })
+                    .unwrap_or((false, false, false));
+                let overwrites =
+                    has_month_order || (self.defs.tax_pillage_month_long != 0 && is_taxing);
+                if overwrites {
+                    let delayed = if in_turn_block { "DELAYED " } else { "" };
+                    self.record_unit_error(
+                        unit_id,
+                        &format!("IDLE: Overwriting previous {delayed}month-long order."),
+                    );
+                }
+                if let Some(unit) = self.game.unit_mut(unit_id) {
+                    if self.mode == OrderParseMode::Turn && self.defs.tax_pillage_month_long != 0 {
+                        unit.taxing = 0;
+                    }
+                    unit.orders.month_orders = Some(OrderData::Idle(IdleOrder::default()));
+                }
+                true
+            }
+            OrderVerb::Combat => {
+                self.parse_combat_order(unit_id, line);
+                true
+            }
+            OrderVerb::Prepare => {
+                self.parse_prepare_order(unit_id, line);
+                true
+            }
+            OrderVerb::Weapon | OrderVerb::Armor => {
+                self.parse_equipment_order(unit_id, verb, line);
+                true
+            }
+            OrderVerb::Password => {
+                self.parse_password_order(unit_id, line);
+                true
+            }
+            OrderVerb::Option => {
+                self.parse_option_order(unit_id, line);
+                true
+            }
+            OrderVerb::Show => {
+                self.parse_show_order(unit_id, line);
+                true
+            }
+            OrderVerb::Declare => {
+                self.parse_declare_order(unit_id, line);
+                true
+            }
+            OrderVerb::Faction => {
+                self.parse_faction_order(unit_id, line);
+                true
+            }
+            OrderVerb::Quit | OrderVerb::Restart => {
+                self.parse_quit_order(unit_id, verb, line);
+                true
+            }
+            OrderVerb::Address => {
+                self.parse_address_order(unit_id, line);
+                true
+            }
+            OrderVerb::Name => {
+                self.parse_name_order(unit_id, line);
+                true
+            }
+            OrderVerb::Describe => {
+                self.parse_describe_order(unit_id, line);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessCombatOrder`.
+    fn parse_combat_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(token) = get_token(line) else {
+            if self.mode == OrderParseMode::Turn {
+                if let Some(unit) = self.game.unit_mut(unit_id) {
+                    unit.combat = -1;
+                }
+                self.record_unit_event(unit_id, "Combat spell set to none.");
+            }
+            return;
+        };
+        if self.mode == OrderParseMode::Check {
+            return;
+        }
+
+        let tables = <dyn Ruleset>::from_name(self.defs.ruleset_name)
+            .expect("parser ruleset is supported")
+            .tables();
+        let Some(skill_id) = crate::defs::skills::lookup_skill(&tables.skills.skills, &token)
+        else {
+            self.record_unit_error(unit_id, "COMBAT: Invalid skill.");
+            return;
+        };
+        let skill = &tables.skills.skills[skill_id];
+        if skill.flags & skill_flags::MAGIC == 0 {
+            self.record_unit_error(unit_id, "COMBAT: That is not a magic skill.");
+            return;
+        }
+        if skill.flags & skill_flags::COMBAT == 0 {
+            self.record_unit_error(unit_id, "COMBAT: That skill cannot be used in combat.");
+            return;
+        }
+        let Some(unit) = self.game.unit(unit_id) else {
+            return;
+        };
+        if unit.unit_type != UnitType::Mage {
+            self.record_unit_error(unit_id, "COMBAT: That unit is not a mage.");
+            return;
+        }
+        if skill_level(unit, skill.abbreviation.unwrap_or(""), &tables) == 0 {
+            self.record_unit_error(unit_id, "COMBAT: Unit does not possess that skill.");
+            return;
+        }
+
+        let skill_name = skill.name.unwrap_or("???");
+        if let Some(unit) = self.game.unit_mut(unit_id) {
+            unit.combat = skill_id as i32;
+            if self.defs.use_prepare_command != 0 {
+                unit.ready_item = -1;
+            }
+        }
+        let message = if self.defs.use_prepare_command != 0 {
+            format!("Combat spell set to {skill_name} and prepared item set to none.")
+        } else {
+            format!("Combat spell set to {skill_name}.")
+        };
+        self.record_unit_event(unit_id, &message);
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessPrepareOrder`.
+    fn parse_prepare_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(token) = get_token(line) else {
+            if self.mode == OrderParseMode::Turn {
+                if let Some(unit) = self.game.unit_mut(unit_id) {
+                    unit.ready_item = -1;
+                }
+                self.record_unit_event(unit_id, "Prepared battle item set to none.");
+            }
+            return;
+        };
+        if self.mode == OrderParseMode::Check {
+            return;
+        }
+
+        let tables = <dyn Ruleset>::from_name(self.defs.ruleset_name)
+            .expect("parser ruleset is supported")
+            .tables();
+        let item_id = tables.item_families.parse_enabled_item(&token);
+        let battle_item = tables.item_families.battle_items.iter().find(|item| {
+            item.abbreviation
+                .as_deref()
+                .is_some_and(|abbreviation| is_equal(abbreviation, &token))
+        });
+        let Some(item_id) = item_id.filter(|item_id| {
+            self.game
+                .unit(unit_id)
+                .is_some_and(|unit| unit.items.get_num(ItemId::from_index(*item_id).unwrap()) > 0)
+        }) else {
+            self.record_unit_error(unit_id, "PREPARE: Unit does not possess that item.");
+            return;
+        };
+        let Some(battle_item) =
+            battle_item.filter(|item| item.flags & BattleItemFlags::SPECIAL != 0)
+        else {
+            self.record_unit_error(unit_id, "PREPARE: That item cannot be prepared.");
+            return;
+        };
+        if battle_item.flags & BattleItemFlags::MAGEONLY != 0 {
+            let (unit_type, apprentices_exist, apprentice_name) = self
+                .game
+                .unit(unit_id)
+                .map(|unit| {
+                    (
+                        unit.unit_type,
+                        self.defs.apprentices_exist != 0,
+                        self.defs.apprentice_name,
+                    )
+                })
+                .unwrap_or((UnitType::Normal, false, ""));
+            if !matches!(
+                unit_type,
+                UnitType::Mage | UnitType::Apprentice | UnitType::GuardMage
+            ) {
+                let mut message = "PREPARE: Only a mage".to_owned();
+                if apprentices_exist {
+                    message.push_str(" or ");
+                    message.push_str(apprentice_name);
+                }
+                message.push_str(" may use this item.");
+                self.record_unit_error(unit_id, &message);
+                return;
+            }
+        }
+
+        let item_name = tables.item_families.items[item_id]
+            .name
+            .as_deref()
+            .unwrap_or("???");
+        let cleared_combat = self
+            .game
+            .unit(unit_id)
+            .is_some_and(|unit| unit.combat != -1);
+        if let Some(unit) = self.game.unit_mut(unit_id) {
+            unit.ready_item = item_id as i32;
+            if cleared_combat {
+                unit.combat = -1;
+            }
+        }
+        let message = if cleared_combat {
+            format!("Prepared item set to {item_name} and combat spell set to none.")
+        } else {
+            format!("Prepared item set to {item_name}.")
+        };
+        self.record_unit_event(unit_id, &message);
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessWeaponOrder` and `ProcessArmorOrder`.
+    fn parse_equipment_order(&mut self, unit_id: UnitId, verb: OrderVerb, line: &mut String) {
+        let is_weapon = verb == OrderVerb::Weapon;
+        let label = if is_weapon { "WEAPON" } else { "ARMOR" };
+        let Some(first_token) = get_token(line) else {
+            if self.mode == OrderParseMode::Turn {
+                if let Some(unit) = self.game.unit_mut(unit_id) {
+                    if is_weapon {
+                        unit.ready_weapon = [-1; 4];
+                    } else {
+                        unit.ready_armor = [-1; 4];
+                    }
+                }
+                let message = if is_weapon {
+                    "Preferred weapons set to none."
+                } else {
+                    "Preferred armor set to none."
+                };
+                self.record_unit_event(unit_id, message);
+            }
+            return;
+        };
+        if self.mode == OrderParseMode::Check {
+            let _ = first_token;
+            return;
+        }
+
+        let tables = <dyn Ruleset>::from_name(self.defs.ruleset_name)
+            .expect("parser ruleset is supported")
+            .tables();
+        let mut selected = Vec::with_capacity(4);
+        let mut token = Some(first_token);
+        while let Some(item_token) = token {
+            let item_id = tables.item_families.parse_enabled_item(&item_token);
+            let owned = item_id.is_some_and(|item_id| {
+                self.game
+                    .unit(unit_id)
+                    .and_then(|unit| unit.faction)
+                    .and_then(|faction_id| self.game.faction(faction_id))
+                    .is_some_and(|faction| {
+                        faction.items.get_num(ItemId::from_index(item_id).unwrap()) > 0
+                    })
+            });
+            let item_id = match (item_id, owned) {
+                (Some(item_id), true) => item_id,
+                _ => {
+                    self.record_unit_error(unit_id, &format!("{label}: Unknown item."));
+                    token = get_token(line);
+                    if selected.len() == 4 {
+                        break;
+                    }
+                    continue;
+                }
+            };
+            let item = &tables.item_families.items[item_id];
+            let required_type = if is_weapon {
+                ItemTypeFlags::WEAPON
+            } else {
+                ItemTypeFlags::ARMOR
+            };
+            if item.item_type & required_type == 0 {
+                let message = if is_weapon {
+                    "WEAPON: Item is not a weapon."
+                } else {
+                    "ARMOR: Item is not armor."
+                };
+                self.record_unit_error(unit_id, message);
+            } else {
+                selected.push(item_id as i32);
+            }
+            token = get_token(line);
+            if selected.len() == 4 {
+                break;
+            }
+        }
+
+        if selected.is_empty() {
+            return;
+        }
+        let mut ready_items = [-1; 4];
+        for (slot, item_id) in selected.into_iter().enumerate() {
+            ready_items[slot] = item_id;
+        }
+        let mut names = ready_items
+            .iter()
+            .filter_map(|item_id| usize::try_from(*item_id).ok())
+            .map(|item_id| {
+                tables.item_families.items[item_id]
+                    .name
+                    .as_deref()
+                    .unwrap_or("???")
+            });
+        let message = if is_weapon {
+            format!(
+                "Preferred weapons set to: {}.",
+                names.by_ref().collect::<Vec<_>>().join(", ")
+            )
+        } else {
+            format!(
+                "Preferred armor set to: {}.",
+                names.by_ref().collect::<Vec<_>>().join(", ")
+            )
+        };
+        if let Some(unit) = self.game.unit_mut(unit_id) {
+            if is_weapon {
+                unit.ready_weapon = ready_items;
+            } else {
+                unit.ready_armor = ready_items;
+            }
+        }
+        self.record_unit_event(unit_id, &message);
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessPasswordOrder`.
+    fn parse_password_order(&mut self, unit_id: UnitId, line: &mut String) {
+        if self.mode == OrderParseMode::Check {
+            return;
+        }
+        let Some(faction_id) = self
+            .game
+            .unit(unit_id)
+            .and_then(|unit| unit.faction)
+            .or(self.faction_id)
+        else {
+            return;
+        };
+        let password = get_token(line);
+        if let Some(faction) = self.game.faction_mut(faction_id) {
+            faction.password = Some(password.clone().unwrap_or_else(|| "none".to_owned()));
+        }
+        let event = match password {
+            Some(password) => format!("Password is now: {password}"),
+            None => "Password cleared.".to_owned(),
+        };
+        self.record_faction_event(faction_id, &event);
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessOptionOrder`.
+    fn parse_option_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(option) = get_token(line) else {
+            self.record_unit_error(unit_id, "OPTION: What option?");
+            return;
+        };
+        let (event, mutation) = if is_equal(&option, "times") {
+            (Some("Times will be sent to your faction."), Some((0, 1)))
+        } else if is_equal(&option, "notimes") {
+            (
+                Some("Times will not be sent to your faction."),
+                Some((0, 0)),
+            )
+        } else if is_equal(&option, "showattitudes") {
+            (
+                Some("Units will now have a leading sign to show your attitude to them."),
+                Some((1, 1)),
+            )
+        } else if is_equal(&option, "dontshowattitudes") {
+            (
+                Some(
+                    "Units will now have a leading minus sign regardless of your attitude to them.",
+                ),
+                Some((1, 0)),
+            )
+        } else if is_equal(&option, "template") {
+            let Some(template) = get_token(line) else {
+                self.record_unit_error(unit_id, "OPTION: No template type specified.");
+                return;
+            };
+            let template = if is_equal(&template, "off") {
+                Some(0)
+            } else if is_equal(&template, "short") {
+                Some(1)
+            } else if is_equal(&template, "long") {
+                Some(2)
+            } else if is_equal(&template, "map") {
+                Some(TEMPLATE_MAP)
+            } else {
+                None
+            };
+            let Some(template) = template else {
+                self.record_unit_error(unit_id, "OPTION: Invalid template type.");
+                return;
+            };
+            if self.mode == OrderParseMode::Turn {
+                if let Some(faction_id) = self
+                    .game
+                    .unit(unit_id)
+                    .and_then(|unit| unit.faction)
+                    .or(self.faction_id)
+                {
+                    if let Some(faction) = self.game.faction_mut(faction_id) {
+                        faction.template_format = template;
+                    }
+                }
+            }
+            return;
+        } else {
+            self.record_unit_error(unit_id, "OPTION: Invalid option.");
+            return;
+        };
+
+        if self.mode == OrderParseMode::Turn {
+            if let Some(faction_id) = self
+                .game
+                .unit(unit_id)
+                .and_then(|unit| unit.faction)
+                .or(self.faction_id)
+            {
+                if let Some(faction) = self.game.faction_mut(faction_id) {
+                    match mutation {
+                        Some((0, value)) => faction.times = value,
+                        Some((1, value)) => faction.show_unit_attitudes = value,
+                        _ => {}
+                    }
+                }
+                if let Some(event) = event {
+                    self.record_faction_event(faction_id, event);
+                }
+            }
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessReshowOrder`.
+    fn parse_show_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(show_type) = get_token(line) else {
+            self.record_unit_error(unit_id, "SHOW: Show what?");
+            return;
+        };
+        let Some(faction_id) = self
+            .game
+            .unit(unit_id)
+            .and_then(|unit| unit.faction)
+            .or(self.faction_id)
+        else {
+            return;
+        };
+        let over_limit = match self.mode {
+            OrderParseMode::Check => {
+                self.check_show_count += 1;
+                self.check_show_count > 101
+            }
+            OrderParseMode::Turn => {
+                let Some(faction) = self.game.faction_mut(faction_id) else {
+                    return;
+                };
+                let over_limit = faction.num_shows > 100;
+                faction.num_shows += 1;
+                if over_limit && faction.num_shows == 102 {
+                    self.record_unit_error(unit_id, "Too many SHOW orders.");
+                    return;
+                }
+                over_limit
+            }
+        };
+        if over_limit {
+            if self.mode == OrderParseMode::Check && self.check_show_count == 102 {
+                self.record_error(None, None, "Too many SHOW orders.");
+            }
+            return;
+        }
+
+        if is_equal(&show_type, "skill") {
+            let Some(skill_token) = get_token(line) else {
+                self.record_unit_error(unit_id, "SHOW: Show what skill?");
+                return;
+            };
+            let Some(level_token) = get_token(line) else {
+                self.record_unit_error(unit_id, "SHOW: No skill level given.");
+                return;
+            };
+            if self.mode == OrderParseMode::Check {
+                return;
+            }
+            let tables = self.ruleset_tables();
+            let skill_id = crate::defs::skills::lookup_skill(&tables.skills.skills, &skill_token);
+            let level = value(&level_token);
+            let valid_skill = skill_id.filter(|skill_id| {
+                let skill = &tables.skills.skills[*skill_id];
+                skill.flags & skill_flags::DISABLED == 0
+                    && (skill.flags & skill_flags::APPRENTICE == 0
+                        || self.defs.apprentices_exist != 0)
+                    && self
+                        .game
+                        .faction(faction_id)
+                        .is_some_and(|faction| level <= faction.skills.get_days(*skill_id) as i32)
+            });
+            let Some(skill_id) = valid_skill else {
+                self.record_unit_error(unit_id, "SHOW: Faction doesn't have that skill.");
+                return;
+            };
+            if let Some(faction) = self.game.faction_mut(faction_id) {
+                faction.shows.push(crate::model::FactionSkillShow {
+                    skill_type: skill_id,
+                    level,
+                });
+            }
+            return;
+        }
+
+        if is_equal(&show_type, "object") {
+            let Some(object_token) = get_token(line) else {
+                self.record_unit_error(unit_id, "SHOW: Show which object?");
+                return;
+            };
+            if self.mode == OrderParseMode::Check {
+                return;
+            }
+            let tables = self.ruleset_tables();
+            if let Some(object_id) = tables
+                .objects
+                .iter()
+                .enumerate()
+                .skip(1)
+                .find(|(_, object)| {
+                    crate::text::is_equal(&object_token, object.name)
+                        && object.flags & crate::defs::objects::object_flags::DISABLED == 0
+                })
+                .map(|(object_id, _)| object_id)
+            {
+                let description = object_description(object_id, tables, self.defs);
+                if let Some(faction) = self.game.faction_mut(faction_id) {
+                    faction.object_shows.push(description);
+                }
+                return;
+            }
+            if let Some(item_id) =
+                tables
+                    .item_families
+                    .items
+                    .iter()
+                    .enumerate()
+                    .find_map(|(item_id, item)| {
+                        (item.item_type & ItemTypeFlags::SHIP != 0
+                            && item.flags & ItemFlags::DISABLED == 0
+                            && (item
+                                .name
+                                .as_deref()
+                                .is_some_and(|name| is_equal(&object_token, name))
+                                || item
+                                    .abbreviation
+                                    .as_deref()
+                                    .is_some_and(|abbr| is_equal(&object_token, abbr))))
+                        .then_some(item_id)
+                    })
+            {
+                self.show_item(unit_id, faction_id, item_id);
+                return;
+            }
+            self.record_unit_error(unit_id, "SHOW: No such object.");
+            return;
+        }
+
+        if is_equal(&show_type, "item") {
+            let Some(item_token) = get_token(line) else {
+                self.record_unit_error(unit_id, "SHOW: Show which item?");
+                return;
+            };
+            if self.mode == OrderParseMode::Check {
+                return;
+            }
+            let tables = self.ruleset_tables();
+            let Some(item_id) = tables.item_families.parse_enabled_item(&item_token) else {
+                self.record_unit_error(unit_id, "SHOW: You don't know anything about that item.");
+                return;
+            };
+            self.show_item(unit_id, faction_id, item_id);
+            return;
+        }
+
+        self.record_unit_error(unit_id, "SHOW: Show what?");
+    }
+
+    fn show_item(&mut self, unit_id: UnitId, faction_id: FactionId, item_id: usize) {
+        let item = &self.tables.item_families.items[item_id];
+        if item.flags & ItemFlags::DISABLED != 0 {
+            self.record_unit_error(unit_id, "SHOW: You don't know anything about that item.");
+            return;
+        }
+        let faction = self
+            .game
+            .faction(faction_id)
+            .expect("selected faction exists");
+        let production_known = item
+            .production_skill
+            .as_deref()
+            .and_then(|skill| crate::defs::skills::lookup_skill(&self.tables.skills.skills, skill))
+            .is_some_and(|skill_id| {
+                item.production_level <= faction.skills.get_days(skill_id) as i32
+            });
+        let magic_known = item
+            .magic_skill
+            .as_deref()
+            .and_then(|skill| crate::defs::skills::lookup_skill(&self.tables.skills.skills, skill))
+            .is_some_and(|skill_id| item.magic_level <= faction.skills.get_days(skill_id) as i32);
+        let item_type = item.item_type;
+        let item_inventory = faction
+            .items
+            .get_num(ItemId::from_index(item_id).expect("item table index is valid"));
+        let full = production_known || magic_known;
+        if full
+            || item_inventory != 0
+            || item_type
+                & (ItemTypeFlags::MAN
+                    | ItemTypeFlags::NORMAL
+                    | ItemTypeFlags::TRADE
+                    | ItemTypeFlags::MONSTER)
+                != 0
+        {
+            crate::players::discover_item(
+                self.game,
+                faction_id,
+                ItemId::from_index(item_id).expect("item table index is valid"),
+                item_id,
+                true,
+                full,
+                self.tables,
+            );
+        } else {
+            self.record_unit_error(unit_id, "SHOW: You don't know anything about that item.");
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessDeclareOrder`.
+    fn parse_declare_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(faction_id) = self
+            .game
+            .unit(unit_id)
+            .and_then(|unit| unit.faction)
+            .or(self.faction_id)
+        else {
+            return;
+        };
+        let Some(faction_token) = get_token(line) else {
+            self.record_error(Some(faction_id), None, "DECLARE: No faction given.");
+            return;
+        };
+        let default = is_equal(&faction_token, "default");
+        let target_number = if default {
+            None
+        } else {
+            let target_number = crate::text::strict_value(&faction_token);
+            if target_number == -1 {
+                self.record_error(Some(faction_id), None, "DECLARE: Non-existent faction.");
+                return;
+            }
+            Some(target_number)
+        };
+        if let Some(target_number) = target_number {
+            if self.mode == OrderParseMode::Turn {
+                let Some(target_id) = self.find_faction(target_number) else {
+                    self.record_error(
+                        Some(faction_id),
+                        None,
+                        &format!("DECLARE: Non-existent faction {target_number}."),
+                    );
+                    return;
+                };
+                if target_id == faction_id {
+                    self.record_error(
+                        Some(faction_id),
+                        None,
+                        "DECLARE: Can't declare towards your own faction.",
+                    );
+                    return;
+                }
+            }
+        }
+
+        let Some(attitude_token) = get_token(line) else {
+            if self.mode == OrderParseMode::Turn {
+                if let Some(target_number) = target_number {
+                    if let Some(faction) = self.game.faction_mut(faction_id) {
+                        set_attitude(faction, target_number, -1);
+                    }
+                }
+            }
+            return;
+        };
+        let Some(attitude) = parse_attitude(&attitude_token) else {
+            self.record_error(Some(faction_id), None, "DECLARE: Invalid attitude.");
+            return;
+        };
+        if self.mode == OrderParseMode::Turn {
+            if let Some(faction) = self.game.faction_mut(faction_id) {
+                if target_number.is_none() {
+                    faction.default_attitude = attitude;
+                } else if let Some(target_number) = target_number {
+                    set_attitude(faction, target_number, attitude);
+                }
+            }
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessFactionOrder`.
+    fn parse_faction_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let tables = self.ruleset_tables();
+        let ruleset =
+            <dyn Ruleset>::from_name(self.defs.ruleset_name).expect("parser ruleset is supported");
+        let type_names = ruleset.faction_types();
+        let mut faction_types = type_names
+            .iter()
+            .map(|name| ((*name).to_owned(), 0))
+            .collect::<Vec<_>>();
+        let Some(mut token) = get_token(line) else {
+            self.record_unit_error(unit_id, "FACTION: Bad faction type.");
+            return;
+        };
+        if is_equal(&token, "generic") {
+            for (_, value) in &mut faction_types {
+                *value = 1;
+            }
+        } else {
+            loop {
+                let Some(index) = faction_types
+                    .iter()
+                    .position(|(name, _)| is_equal(name, &token))
+                else {
+                    self.record_unit_error(unit_id, "FACTION: Bad faction type.");
+                    return;
+                };
+                let Some(points) = get_token(line) else {
+                    self.record_unit_error(unit_id, "FACTION: Bad faction type.");
+                    return;
+                };
+                faction_types[index].1 = value(&points);
+                let Some(next) = get_token(line) else {
+                    break;
+                };
+                token = next;
+            }
+            let total = faction_types
+                .iter()
+                .fold(0_i32, |total, (_, points)| total.wrapping_add(*points));
+            if total > self.defs.faction_points {
+                self.record_unit_error(unit_id, "FACTION: Bad faction type.");
+                return;
+            }
+        }
+        if self.mode == OrderParseMode::Check {
+            return;
+        }
+
+        let Some(faction_id) = self
+            .game
+            .unit(unit_id)
+            .and_then(|unit| unit.faction)
+            .or(self.faction_id)
+        else {
+            return;
+        };
+        let old_types = self
+            .game
+            .faction(faction_id)
+            .map(|faction| faction.faction_types.clone())
+            .unwrap_or_default();
+        let counts = self.count_faction_type_units(faction_id, tables);
+        if let Some(faction) = self.game.faction_mut(faction_id) {
+            faction.faction_types = faction_types;
+        }
+        let (mages, apprentices, quartermasters, tacticians) = counts;
+        let types = self
+            .game
+            .faction(faction_id)
+            .map(|faction| faction.faction_types.as_slice())
+            .unwrap_or(&[]);
+        let limits = ruleset.faction_limits();
+        let magic = faction_type_points(types, "Magic");
+        let martial = faction_type_points(types, "Martial");
+        let war = faction_type_points(types, "War");
+        let trade = faction_type_points(types, "Trade");
+        let too_many_mages = mages > faction_limit(limits.mages, magic);
+        let too_many_apprentices = apprentices > faction_limit(limits.apprentices, magic);
+        let too_many_quartermasters =
+            self.defs.transport & crate::defs::enums::flags::ALLOW_TRANSPORT != 0
+                && quartermasters > faction_limit(limits.quartermasters, trade.max(martial));
+        let too_many_tacticians = self.defs.tactics_needs_war != 0
+            && tacticians > faction_limit(limits.tacticians, war.max(martial));
+        let error = if too_many_mages {
+            Some("FACTION: Too many mages to change to that faction type.".to_owned())
+        } else if too_many_apprentices {
+            Some(format!(
+                "FACTION: Too many {}s to change to that faction type.",
+                self.defs.apprentice_name
+            ))
+        } else if too_many_quartermasters {
+            Some("FACTION: Too many quartermasters to change to that faction type.".to_owned())
+        } else if too_many_tacticians {
+            Some("FACTION: Too many tacticians to change to that faction type.".to_owned())
+        } else {
+            None
+        };
+        if let Some(error) = error {
+            if let Some(faction) = self.game.faction_mut(faction_id) {
+                faction.faction_types = old_types;
+            }
+            self.record_unit_error(unit_id, &error);
+            return;
+        }
+        let turn_number = (self.game.year - 1) * 12 + self.game.month + 1;
+        if let Some(faction) = self.game.faction_mut(faction_id) {
+            faction.last_change = turn_number;
+            faction.activity.clear();
+            faction.num_shows = 0;
+        }
+    }
+
+    fn count_faction_type_units(
+        &self,
+        faction_id: FactionId,
+        tables: &RulesetTables,
+    ) -> (i32, i32, i32, i32) {
+        let quartermaster_skill = tables.skills.skills.iter().find_map(|skill| {
+            skill
+                .name
+                .filter(|name| is_equal(name, "Quartermaster"))
+                .and(skill.abbreviation)
+        });
+        let tactics_skill = tables.skills.skills.iter().find_map(|skill| {
+            skill
+                .name
+                .filter(|name| is_equal(name, "Tactics"))
+                .and(skill.abbreviation)
+        });
+        let unit_ids = self
+            .game
+            .region_ids()
+            .iter()
+            .filter_map(|region_id| self.game.region(*region_id))
+            .flat_map(|region| region.object_ids().iter())
+            .filter_map(|object_id| self.game.object(*object_id))
+            .flat_map(|object| object.unit_ids().iter().copied())
+            .collect::<Vec<_>>();
+        let mut counts = (0, 0, 0, 0);
+        for unit_id in unit_ids {
+            let Some(unit) = self.game.unit(unit_id) else {
+                continue;
+            };
+            if unit.faction != Some(faction_id) {
+                continue;
+            }
+            if unit.unit_type == UnitType::Mage {
+                counts.0 += 1;
+            }
+            if unit.unit_type == UnitType::Apprentice {
+                counts.1 += 1;
+            }
+            if quartermaster_skill.is_some_and(|skill| skill_level(unit, skill, tables) > 0) {
+                counts.2 += 1;
+            }
+            if tactics_skill.is_some_and(|skill| skill_level(unit, skill, tables) == 5) {
+                counts.3 += 1;
+            }
+        }
+        counts
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessQuitOrder` and `ProcessRestartOrder`.
+    fn parse_quit_order(&mut self, unit_id: UnitId, verb: OrderVerb, line: &mut String) {
+        if self.mode == OrderParseMode::Check {
+            return;
+        }
+        let Some(faction_id) = self
+            .game
+            .unit(unit_id)
+            .and_then(|unit| unit.faction)
+            .or(self.faction_id)
+        else {
+            return;
+        };
+        let Some((password, address, quit)) = self.game.faction(faction_id).map(|faction| {
+            (
+                faction
+                    .password
+                    .clone()
+                    .unwrap_or_else(|| "none".to_owned()),
+                faction.address.clone().unwrap_or_default(),
+                faction.quit,
+            )
+        }) else {
+            return;
+        };
+        if !is_equal(&password, "none")
+            && get_token(line).is_none_or(|token| !is_equal(&token, &password))
+        {
+            let label = if verb == OrderVerb::Quit {
+                "QUIT"
+            } else {
+                "RESTART"
+            };
+            self.record_error(
+                Some(faction_id),
+                None,
+                &format!("{label}: Must give the correct password."),
+            );
+            return;
+        }
+        if quit == QUIT_AND_RESTART {
+            return;
+        }
+        if let Some(faction) = self.game.faction_mut(faction_id) {
+            faction.quit = if verb == OrderVerb::Quit {
+                QUIT_BY_ORDER
+            } else {
+                QUIT_AND_RESTART
+            };
+        }
+        if verb == OrderVerb::Restart {
+            let ruleset = <dyn Ruleset>::from_name(self.defs.ruleset_name)
+                .expect("parser ruleset is supported");
+            let number = self.game.faction_seq;
+            let mut new_faction = Faction::new(number, ruleset.faction_types());
+            new_faction.address = Some(address.clone());
+            new_faction.password = Some(password);
+            self.game.add_faction(new_faction);
+            self.game.faction_seq = self.game.faction_seq.wrapping_add(1);
+            self.game
+                .new_factions
+                .push(format!("Restarting {address}."));
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessAddressOrder`.
+    fn parse_address_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(address) = get_token(line) else {
+            self.record_unit_error(unit_id, "ADDRESS: No address given.");
+            return;
+        };
+        if self.mode == OrderParseMode::Turn {
+            if let Some(faction_id) = self
+                .game
+                .unit(unit_id)
+                .and_then(|unit| unit.faction)
+                .or(self.faction_id)
+            {
+                if let Some(faction) = self.game.faction_mut(faction_id) {
+                    faction.address = Some(address);
+                }
+            }
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessNameOrder`, `Faction::SetName`, and `Unit::SetName`.
+    fn parse_name_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(target) = get_token(line) else {
+            self.record_unit_error(unit_id, "NAME: No argument.");
+            return;
+        };
+
+        if is_equal(&target, "faction") || is_equal(&target, "unit") {
+            let Some(name) = get_token(line) else {
+                self.record_unit_error(unit_id, "NAME: No name given.");
+                return;
+            };
+            if self.mode != OrderParseMode::Turn {
+                return;
+            }
+
+            if is_equal(&target, "faction") {
+                let faction_id = self
+                    .game
+                    .unit(unit_id)
+                    .and_then(|unit| unit.faction)
+                    .or(self.faction_id);
+                if let Some(faction) = faction_id.and_then(|id| self.game.faction_mut(id)) {
+                    if let Some(name) = crate::text::get_legal(&name) {
+                        faction.name = Some(format!("{name} ({})", faction.num));
+                    }
+                }
+            } else if let Some(unit) = self.game.unit_mut(unit_id) {
+                if let Some(name) = crate::text::get_legal(&name) {
+                    unit.name = Some(format!("{name} ({})", unit.num));
+                }
+            }
+            return;
+        }
+
+        if is_name_object_target(&target) {
+            let Some(name) = get_token(line) else {
+                self.record_unit_error(unit_id, "NAME: No name given.");
+                return;
+            };
+            if self.mode != OrderParseMode::Turn {
+                return;
+            }
+            let Some(object_id) = self.game.unit(unit_id).and_then(|unit| unit.object) else {
+                self.record_unit_error(unit_id, "NAME: Unit is not owner.");
+                return;
+            };
+            if !self.is_object_owner(unit_id, object_id) {
+                self.record_unit_error(unit_id, "NAME: Unit is not owner.");
+                return;
+            }
+            if !self.object_can_modify(object_id) {
+                self.record_unit_error(unit_id, "NAME: Can't name this type of object.");
+                return;
+            }
+            if let (Some(name), Some(object)) = (
+                crate::text::get_legal(&name),
+                self.game.object_mut(object_id),
+            ) {
+                object.name = Some(format!("{name} [{}]", object.num));
+            }
+            return;
+        }
+
+        if is_equal(&target, "village") || is_equal(&target, "town") || is_equal(&target, "city") {
+            let Some(name) = get_token(line) else {
+                self.record_unit_error(unit_id, "NAME: No name given.");
+                return;
+            };
+            if self.mode != OrderParseMode::Turn {
+                return;
+            }
+
+            let Some(object_id) = self.game.unit(unit_id).and_then(|unit| unit.object) else {
+                self.record_unit_error(unit_id, "NAME: Unit is not in a structure.");
+                return;
+            };
+            let Some((region_id, object_type, owner_id, incomplete)) =
+                self.game.object(object_id).map(|object| {
+                    (
+                        object.region,
+                        object.object_type,
+                        object.unit_ids().first().copied(),
+                        object.incomplete,
+                    )
+                })
+            else {
+                self.record_unit_error(unit_id, "NAME: Unit is not in a structure.");
+                return;
+            };
+            let Some(region_id) = region_id else {
+                self.record_unit_error(unit_id, "NAME: Unit is not in a village, town or city.");
+                return;
+            };
+            let Some((town_type, old_name)) = self.game.region(region_id).and_then(|region| {
+                region.town.as_ref().map(|town| {
+                    (
+                        crate::npc::town_type(region, self.defs.city_pop),
+                        town.name.clone().unwrap_or_default(),
+                    )
+                })
+            }) else {
+                self.record_unit_error(unit_id, "NAME: Unit is not in a village, town or city.");
+                return;
+            };
+            let town_name = match town_type {
+                0 => "village",
+                1 => "town",
+                _ => "city",
+            };
+            let object_type = usize::try_from(object_type).ok();
+            let large_enough = match town_type {
+                0 => matches!(
+                    object_type,
+                    Some(
+                        crate::defs::objects::O_TOWER
+                            | crate::defs::objects::O_MTOWER
+                            | crate::defs::objects::O_FORT
+                            | crate::defs::objects::O_MFORTRESS
+                            | crate::defs::objects::O_CASTLE
+                            | crate::defs::objects::O_CITADEL
+                            | crate::defs::objects::O_MCASTLE
+                            | crate::defs::objects::O_MCITADEL
+                    )
+                ),
+                1 => matches!(
+                    object_type,
+                    Some(
+                        crate::defs::objects::O_FORT
+                            | crate::defs::objects::O_MFORTRESS
+                            | crate::defs::objects::O_CASTLE
+                            | crate::defs::objects::O_CITADEL
+                            | crate::defs::objects::O_MCASTLE
+                            | crate::defs::objects::O_MCITADEL
+                    )
+                ),
+                _ => matches!(
+                    object_type,
+                    Some(
+                        crate::defs::objects::O_CASTLE
+                            | crate::defs::objects::O_CITADEL
+                            | crate::defs::objects::O_MCASTLE
+                            | crate::defs::objects::O_MCITADEL
+                    )
+                ),
+            };
+            if !large_enough {
+                self.record_unit_error(
+                    unit_id,
+                    &format!(
+                        "NAME: Unit is not in a large enough structure to rename a {town_name}."
+                    ),
+                );
+                return;
+            }
+            if owner_id != Some(unit_id) {
+                self.record_unit_error(
+                    unit_id,
+                    &format!("NAME: Cannot name {town_name}.  Unit is not the owner of object."),
+                );
+                return;
+            }
+            if incomplete > 0 {
+                self.record_unit_error(
+                    unit_id,
+                    &format!("NAME: Cannot name {town_name}.  Object is not finished."),
+                );
+                return;
+            }
+
+            let Some(name) = crate::text::get_legal(&name) else {
+                self.record_unit_error(unit_id, "NAME: Illegal name.");
+                return;
+            };
+            let cost = if self.defs.city_rename_cost != 0 {
+                town_type
+                    .wrapping_add(1)
+                    .wrapping_mul(self.defs.city_rename_cost)
+            } else {
+                0
+            };
+            if cost != 0 {
+                let silver = self
+                    .game
+                    .unit(unit_id)
+                    .map_or(0, |unit| unit.items.get_num(ItemId::Silver));
+                if silver < cost {
+                    self.record_unit_error(
+                        unit_id,
+                        &format!("NAME: Unit doesn't have enough silver to rename a {town_name}."),
+                    );
+                    return;
+                }
+                if let Some(unit) = self.game.unit_mut(unit_id) {
+                    unit.items
+                        .set_num(ItemId::Silver, silver.wrapping_sub(cost));
+                }
+            }
+
+            self.record_unit_event(unit_id, &format!("Renames {old_name} to {name}."));
+            self.notify_city(region_id, unit_id, &old_name, &name);
+            if let Some(town) = self
+                .game
+                .region_mut(region_id)
+                .and_then(|region| region.town.as_mut())
+            {
+                town.name = Some(name);
+            }
+            return;
+        }
+
+        self.record_unit_error(unit_id, "NAME: Can't name that.");
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessDescribeOrder`, `Unit::SetDescribe`, and `Object::SetDescribe`.
+    fn parse_describe_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(target) = get_token(line) else {
+            self.record_unit_error(unit_id, "DESCRIBE: No argument.");
+            return;
+        };
+
+        if is_equal(&target, "unit") {
+            let describe = get_token(line);
+            if self.mode == OrderParseMode::Turn {
+                if let Some(unit) = self.game.unit_mut(unit_id) {
+                    unit.describe = describe.as_deref().and_then(crate::text::get_legal);
+                }
+            }
+            return;
+        }
+
+        if is_name_object_target(&target) {
+            let describe = get_token(line);
+            if self.mode != OrderParseMode::Turn {
+                return;
+            }
+            let Some(object_id) = self.game.unit(unit_id).and_then(|unit| unit.object) else {
+                self.record_unit_error(unit_id, "DESCRIBE: Unit is not owner.");
+                return;
+            };
+            if !self.is_object_owner(unit_id, object_id) {
+                self.record_unit_error(unit_id, "DESCRIBE: Unit is not owner.");
+                return;
+            }
+            if self.object_can_modify(object_id) {
+                if let Some(object) = self.game.object_mut(object_id) {
+                    object.describe = describe.as_deref().and_then(crate::text::get_legal);
+                }
+            }
+            return;
+        }
+
+        self.record_unit_error(unit_id, "DESCRIBE: Can't describe that.");
+    }
+
+    fn is_object_owner(&self, unit_id: UnitId, object_id: ObjectId) -> bool {
+        self.game
+            .object(object_id)
+            .and_then(|object| object.unit_ids().first().copied())
+            == Some(unit_id)
+    }
+
+    fn object_can_modify(&self, object_id: ObjectId) -> bool {
+        self.game
+            .object(object_id)
+            .and_then(|object| usize::try_from(object.object_type).ok())
+            .and_then(|object_type| {
+                self.ruleset_tables()
+                    .objects
+                    .get(object_type)
+                    .map(|object| object.flags)
+            })
+            .is_some_and(|flags| flags & crate::defs::objects::object_flags::CANMODIFY != 0)
+    }
+
+    fn notify_city(
+        &mut self,
+        region_id: crate::model::RegionId,
+        caster_id: UnitId,
+        old_name: &str,
+        new_name: &str,
+    ) {
+        let Some((caster_faction, caster_name)) = self.game.unit(caster_id).map(|unit| {
+            (
+                unit.faction.or(self.faction_id),
+                unit.name
+                    .clone()
+                    .unwrap_or_else(|| format!("Unit ({})", unit.num)),
+            )
+        }) else {
+            return;
+        };
+        let faction_ids = self
+            .game
+            .region(region_id)
+            .map(|region| {
+                let mut factions = Vec::new();
+                let mut faction_numbers = Vec::new();
+                for object_id in region.object_ids() {
+                    let Some(object) = self.game.object(*object_id) else {
+                        continue;
+                    };
+                    for unit_id in object.unit_ids() {
+                        if let Some(faction_id) =
+                            self.game.unit(*unit_id).and_then(|unit| unit.faction)
+                        {
+                            if Some(faction_id) == caster_faction {
+                                continue;
+                            }
+                            if let Some(faction) = self.game.faction(faction_id) {
+                                if !faction_numbers.contains(&faction.num) {
+                                    faction_numbers.push(faction.num);
+                                    factions.push(faction_id);
+                                }
+                            }
+                        }
+                    }
+                }
+                factions
+            })
+            .unwrap_or_default();
+        let message = format!("{caster_name} renames {old_name} to {new_name}.");
+        for faction_id in faction_ids {
+            self.record_faction_event(faction_id, &message);
+        }
+    }
+
+    fn parse_tf_order(&mut self, unit_id: UnitId, line: &mut String, label: &str) -> Option<i32> {
+        let Some(token) = get_token(line) else {
+            self.record_unit_error(unit_id, &format!("{label}: Invalid value."));
+            return None;
+        };
+        let value = parse_tf(&token);
+        if value == -1 {
+            self.record_unit_error(unit_id, &format!("{label}: Invalid value."));
+            None
+        } else {
+            Some(value)
+        }
+    }
+
+    fn set_unit_flag(&mut self, unit_id: UnitId, flag: i32, value: bool) {
+        if self.mode == OrderParseMode::Turn {
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                if value {
+                    unit.flags |= flag;
+                } else {
+                    unit.flags &= !flag;
+                }
+            }
+        }
+    }
+
+    fn record_unit_event(&mut self, unit_id: UnitId, message: &str) {
+        let Some((faction_id, unit_name)) = self.game.unit(unit_id).map(|unit| {
+            (
+                unit.faction.or(self.faction_id),
+                unit.name
+                    .clone()
+                    .unwrap_or_else(|| format!("Unit ({})", unit.num)),
+            )
+        }) else {
+            return;
+        };
+        let Some(faction_id) = faction_id else {
+            return;
+        };
+        if let Some(faction) = self.game.faction_mut(faction_id) {
+            if !faction_is_npc(faction) {
+                faction.events.push(format!("{unit_name}: {message}"));
+            }
+        }
+    }
+
+    fn record_faction_event(&mut self, faction_id: FactionId, message: &str) {
+        if let Some(faction) = self.game.faction_mut(faction_id) {
+            if !faction_is_npc(faction) {
+                faction.events.push(message.to_owned());
+            }
+        }
+    }
+
+    fn nocross_is_available(&self) -> bool {
+        if self.defs.flight_over_water != crate::defs::enums::flags::WFLIGHT_NONE {
+            return true;
+        }
+        let tables = <dyn Ruleset>::from_name(self.defs.ruleset_name)
+            .expect("parser ruleset is supported")
+            .tables();
+        tables
+            .item_families
+            .items
+            .iter()
+            .any(|item| item.flags & ItemFlags::DISABLED == 0 && item.swim > 0)
+    }
+
     /// C++: `parseorders.cpp` `Game::ProcessAdvanceOrder`, `ProcessMoveOrder`, and `ProcessSailOrder`.
     fn parse_movement_order(&mut self, unit_id: UnitId, verb: OrderVerb, line: &mut String) {
         let (has_other_month_order, in_turn_block, is_taxing) = self
@@ -2467,15 +4102,14 @@ impl<'a> Parser<'a> {
             .expect("selected unit exists")
             .items
             .set_num(ItemId::Silver, money.wrapping_add(amount));
-        let tables = <dyn Ruleset>::from_name(self.defs.ruleset_name)
-            .expect("parser ruleset is supported")
-            .tables();
         crate::players::discover_item(
             self.game,
             faction_id,
             ItemId::Silver,
             ItemId::Silver.index(),
-            &tables,
+            false,
+            true,
+            self.tables,
         );
         crate::players::unit_event(self.game, faction_id, unit_id, format!("Claims ${amount}."));
     }
@@ -2608,8 +4242,17 @@ impl<'a> Parser<'a> {
                 self.record_unit_error(unit_id, "FORM: without END.");
             }
             if self.mode == OrderParseMode::Check {
+                let saved_state = self
+                    .check_unit_states
+                    .iter()
+                    .find(|(saved_id, _, _)| *saved_id == unit_id)
+                    .copied();
                 if let Some(unit) = self.game.unit_mut(unit_id) {
                     unit.clear_orders();
+                    if let Some((_, reveal, taxing)) = saved_state {
+                        unit.reveal = reveal;
+                        unit.taxing = taxing;
+                    }
                 }
             }
         }
@@ -2761,6 +4404,248 @@ fn parse_dir(token: &str) -> Option<i32> {
     (number != 0).then_some(super::MOVE_ENTER.wrapping_add(number))
 }
 
+/// C++: `parseorders.cpp` `ParseTF`.
+fn parse_tf(token: &str) -> i32 {
+    if is_equal(token, "true")
+        || is_equal(token, "t")
+        || is_equal(token, "on")
+        || is_equal(token, "yes")
+        || is_equal(token, "1")
+    {
+        1
+    } else if is_equal(token, "false")
+        || is_equal(token, "f")
+        || is_equal(token, "off")
+        || is_equal(token, "no")
+        || is_equal(token, "0")
+    {
+        0
+    } else {
+        -1
+    }
+}
+
+fn parse_attitude(token: &str) -> Option<i32> {
+    ["hostile", "unfriendly", "neutral", "friendly", "ally"]
+        .iter()
+        .position(|attitude| is_equal(token, attitude))
+        .map(|attitude| attitude as i32)
+}
+
+fn set_attitude(faction: &mut Faction, faction_num: i32, attitude: i32) {
+    if let Some(index) = faction
+        .attitudes
+        .iter()
+        .position(|current| current.faction_num == faction_num)
+    {
+        if attitude == -1 {
+            faction.attitudes.remove(index);
+        } else {
+            faction.attitudes[index].attitude = attitude;
+        }
+    } else if attitude != -1 {
+        faction.attitudes.push(crate::model::Attitude {
+            faction_num,
+            attitude,
+        });
+    }
+}
+
+fn faction_type_points(faction_types: &[(String, i32)], name: &str) -> i32 {
+    faction_types
+        .iter()
+        .find(|(faction_type, _)| is_equal(faction_type, name))
+        .map_or(0, |(_, points)| *points)
+}
+
+fn faction_limit(limits: &[i32], points: i32) -> i32 {
+    let Some(last) = limits.last() else {
+        return 0;
+    };
+    let index = usize::try_from(points.max(0)).unwrap_or(usize::MAX);
+    limits.get(index).copied().unwrap_or(*last)
+}
+
+fn object_description(object_id: usize, tables: &RulesetTables, defs: &GameDefs) -> String {
+    let object = &tables.objects[object_id];
+    let mut description = format!("{}: ", object.name);
+    if object.flags & crate::defs::objects::object_flags::GROUP != 0 {
+        description.push_str("This is a group of ships.");
+    } else if object.capacity != 0 {
+        description.push_str("This is a ship.");
+    } else {
+        description.push_str("This is a building.");
+    }
+
+    if defs.lair_monsters_exist != 0 && object.monster != -1 {
+        if let Some(monster) = usize::try_from(object.monster)
+            .ok()
+            .and_then(|item_id| tables.item_families.items.get(item_id))
+        {
+            description.push(' ');
+            description.push_str(&crate::text::capitalize(
+                monster.plural.as_deref().unwrap_or(""),
+            ));
+            description.push_str(" can potentially lair in this structure.");
+        }
+        if object.flags & crate::defs::objects::object_flags::NOMONSTERGROWTH != 0 {
+            description.push_str(" Monsters in this structures will never regenerate.");
+        }
+    }
+
+    if object.flags & crate::defs::objects::object_flags::CANENTER != 0 {
+        description.push_str(" Units may enter this structure.");
+    }
+
+    if object.protection != 0 {
+        description.push_str(&format!(
+            " This structure provides defense to the first {} men inside it.",
+            object.protection
+        ));
+        let mut remaining = object.defense.iter().filter(|bonus| **bonus != 0).count();
+        description.push_str(" This structure gives a defensive bonus of ");
+        for (attack_type, bonus) in object.defense.iter().enumerate() {
+            if *bonus == 0 {
+                continue;
+            }
+            remaining -= 1;
+            description.push_str(&format!(
+                "{bonus} against {} attacks",
+                attack_type_name(attack_type)
+            ));
+            if remaining >= 2 {
+                description.push_str(", ");
+            } else if remaining == 1 {
+                description.push_str(" and ");
+            } else {
+                description.push('.');
+            }
+        }
+        if defs.extended_fort_defence != 0 && object.capacity == 0 {
+            description.push_str(" This structure also protects in all adjacent regions.");
+        }
+    }
+
+    for special in &tables.skills.specials {
+        if special.target_flags
+            & (crate::defs::skills::special_target_flags::HIT_BUILDING_IF
+                | crate::defs::skills::special_target_flags::HIT_BUILDING_EXCEPT)
+            == 0
+            || !special.buildings.contains(&(object_id as i32))
+        {
+            continue;
+        }
+        description.push_str(" Units in this structure are");
+        if special.target_flags & crate::defs::skills::special_target_flags::HIT_BUILDING_EXCEPT
+            != 0
+        {
+            description.push_str(" not");
+        }
+        description.push_str(" affected by ");
+        description.push_str(special.name.unwrap_or("???"));
+        description.push('.');
+    }
+
+    if object.sailors != 0 {
+        description.push_str(&format!(
+            " This ship requires {} total levels of sailing skill to sail.",
+            object.sailors
+        ));
+    }
+    if object.maximum_mages != 0 && defs.limited_mages_per_building != 0 {
+        description.push_str(" This structure will allow ");
+        if object.maximum_mages > 1 {
+            description.push_str(&format!("up to {} mages", object.maximum_mages));
+        } else {
+            description.push_str("one mage");
+        }
+        description.push_str(" to study above level 2.");
+    }
+
+    let item_is_wood_or_stone = object.item == -2;
+    let skill_disabled = object
+        .skill
+        .and_then(|skill| crate::defs::skills::lookup_skill(&tables.skills.skills, skill))
+        .and_then(|skill_id| tables.skills.skills.get(skill_id))
+        .is_none_or(|skill| skill.flags & skill_flags::DISABLED != 0);
+    let item_disabled = if item_is_wood_or_stone {
+        [ItemId::Wood, ItemId::Stone].iter().all(|item_id| {
+            tables.item_families.items[item_id.index()].flags & ItemFlags::DISABLED != 0
+        })
+    } else {
+        usize::try_from(object.item)
+            .ok()
+            .and_then(|item_id| tables.item_families.items.get(item_id))
+            .is_none_or(|item| item.flags & ItemFlags::DISABLED != 0)
+    };
+    let buildable =
+        object.item != -1 && object.skill.is_some() && !skill_disabled && !item_disabled;
+    if !buildable && object.flags & crate::defs::objects::object_flags::GROUP == 0 {
+        description.push_str(" This structure cannot be built by players.");
+    }
+
+    if object.production_aided != -1
+        && usize::try_from(object.production_aided)
+            .ok()
+            .and_then(|item_id| tables.item_families.items.get(item_id))
+            .is_some_and(|item| item.flags & ItemFlags::DISABLED == 0)
+    {
+        description.push_str(" This trade structure increases the amount of ");
+        if object.production_aided == ItemId::Silver.index() as i32 {
+            description.push_str("entertainment");
+        } else if let Some(item) = usize::try_from(object.production_aided)
+            .ok()
+            .and_then(|item_id| tables.item_families.items.get(item_id))
+        {
+            description.push_str(item.plural.as_deref().unwrap_or(""));
+        }
+        description.push_str(" available in the region.");
+    }
+
+    if defs.decay != 0 {
+        if object.flags & crate::defs::objects::object_flags::NEVERDECAY != 0 {
+            description.push_str(" This structure will never decay.");
+        } else {
+            description.push_str(&format!(
+                " This structure can take {} units of damage before it begins to decay.",
+                object.maximum_maintenance
+            ));
+            description.push_str(&format!(
+                " Damage can occur at a maximum rate of {} units per month.",
+                object.maximum_monthly_decay
+            ));
+            if buildable {
+                description.push_str(&format!(
+                    " Repair of damage is accomplished at a rate of {} damage units per unit of ",
+                    object.maintenance_factor
+                ));
+                if item_is_wood_or_stone {
+                    description.push_str("wood or stone.");
+                } else if let Some(item) = usize::try_from(object.item)
+                    .ok()
+                    .and_then(|item_id| tables.item_families.items.get(item_id))
+                {
+                    description.push_str(item.name.as_deref().unwrap_or(""));
+                }
+            }
+        }
+    }
+    description
+}
+
+fn attack_type_name(attack_type: usize) -> &'static str {
+    match attack_type {
+        0 => "melee",
+        1 => "energy",
+        2 => "spirit",
+        3 => "weather",
+        4 => "riding",
+        5 => "ranged",
+        6 => "non-resistable",
+        _ => "unknown",
+    }
+}
+
 fn faction_is_npc(faction: &Faction) -> bool {
     faction
         .faction_types
@@ -2817,6 +4702,12 @@ fn is_coastal_or_lakeside(
             .iter()
             .flatten()
             .any(|neighbor_id| game.region(*neighbor_id).is_some_and(is_ocean))
+}
+
+fn is_name_object_target(token: &str) -> bool {
+    ["ship", "building", "object", "structure"]
+        .iter()
+        .any(|target| is_equal(token, target))
 }
 
 /// C++: `unit.cpp` `Unit::Taxers`; only the positive-taxer result is needed here.
@@ -3092,12 +4983,14 @@ fn skill_level(unit: &crate::model::Unit, abbreviation: &str, tables: &RulesetTa
 #[cfg(test)]
 mod tests {
     use super::{parse_order_file as parse_order_file_with_tables, OrderParseMode};
-    use crate::defs::{skills::skill_flags, GameDefs, ItemId};
-    use crate::model::{Faction, Game, Object, Region, Unit};
+    use crate::defs::{
+        skills::skill_flags, BattleItemFlags, GameDefs, ItemFlags, ItemId, ItemTypeFlags,
+    };
+    use crate::model::{Faction, Game, Object, Region, TownInfo, Unit, UnitType};
     use crate::orders::{
         BuildOrder, BuyOrder, CastIntOrder, CastOrder, CastOrderData, CastRegionOrder,
-        CastTransmuteOrder, CastUnitsOrder, ExchangeOrder, GiveOrder, JoinOrder, MoveDir,
-        MoveOrder, Order, OrderData, OrderUnitId, OrderVerb, ProduceOrder, SellOrder,
+        CastTransmuteOrder, CastUnitsOrder, ExchangeOrder, FindOrder, GiveOrder, JoinOrder,
+        MoveDir, MoveOrder, Order, OrderData, OrderUnitId, OrderVerb, ProduceOrder, SellOrder,
         TeleportOrder, TransportOrder, TurnOrder, WithdrawOrder, MOVE_ENTER, MOVE_IN, MOVE_OUT,
         MOVE_PAUSE,
     };
@@ -4378,6 +6271,35 @@ mod tests {
     }
 
     #[test]
+    fn check_mode_reveal_and_idle_preserve_existing_unit_state() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let tables = ruleset.tables();
+        let mut defs = *ruleset.game_defs();
+        defs.tax_pillage_month_long = 1;
+        let (mut game, _, _, unit_id) = game_with_unit();
+        {
+            let unit = game.unit_mut(unit_id).unwrap();
+            unit.reveal = 1;
+            unit.taxing = 5;
+        }
+
+        let result = parse_order_file_with_tables(
+            &mut game,
+            &defs,
+            &tables,
+            b"#atlantis 7 none\nunit 10\nreveal faction\nidle\n#end\n",
+            OrderParseMode::Check,
+        )
+        .unwrap();
+
+        let unit = game.unit(unit_id).unwrap();
+        assert_eq!(unit.reveal, 1);
+        assert_eq!(unit.taxing, 5);
+        assert!(unit.orders.month_orders.is_none());
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
     fn study_orders_remain_dispatched_with_trade_orders() {
         let (mut game, _, _, unit_id) = game_with_unit();
         let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
@@ -5273,6 +7195,932 @@ mod tests {
     }
 
     #[test]
+    fn parse_tf_and_feature_gated_orders_match_cpp() {
+        for (token, expected) in [
+            ("true", 1),
+            ("FALSE", 0),
+            ("t", 1),
+            ("F", 0),
+            ("on", 1),
+            ("OFF", 0),
+            ("Yes", 1),
+            ("no", 0),
+            ("1", 1),
+            ("0", 0),
+            ("maybe", -1),
+        ] {
+            assert_eq!(super::parse_tf(token), expected, "{token}");
+        }
+
+        let (mut game, faction_id, _, unit_id) = game_with_unit();
+        let mut defs = *<dyn Ruleset>::from_name("standard").unwrap().game_defs();
+        defs.use_prepare_command = 0;
+        defs.use_weapon_armor_command = 0;
+        defs.have_email_special_commands = 0;
+        defs.faction_limit_type = 0;
+        parse_order_file(
+            &mut game,
+            &defs,
+            b"#atlantis 7 none\nunit 10\nprepare sword\nweapon sword\narmor chain armor\nfind all\nfaction generic\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            [
+                "Unit (10): PREPARE is not a valid order.",
+                "Unit (10): WEAPON is not a valid order.",
+                "Unit (10): ARMOR is not a valid order.",
+                "Unit (10): FIND: This command was disabled.",
+                "Unit (10): FACTION: Invalid order, no faction types in this game."
+            ]
+        );
+        assert_eq!(game.unit(unit_id).unwrap().ready_item, -1);
+    }
+
+    #[test]
+    fn instant_flag_orders_change_unit_state_during_parse() {
+        let ruleset = <dyn Ruleset>::from_name("neworigins").unwrap();
+        let (mut game, faction_id, _, unit_id) = game_with_unit();
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nbehind yes\nautotax on\nhold 1\nnoaid T\nshare true\nconsume unit\nreveal unit\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            game.unit(unit_id).unwrap().flags,
+            0x0002 | 0x0001 | 0x0004 | 0x0008 | 0x0010 | 0x1000 | 0x0040
+        );
+        assert_eq!(game.unit(unit_id).unwrap().reveal, 1);
+
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nconsume faction\nreveal faction\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            game.unit(unit_id).unwrap().flags,
+            0x0002 | 0x0001 | 0x0004 | 0x0008 | 0x0010 | 0x1000 | 0x0080
+        );
+        assert_eq!(game.unit(unit_id).unwrap().reveal, 2);
+
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nconsume NoNe\nspoils ride\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(game.unit(unit_id).unwrap().flags & 0x6f00, 0x0800);
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nspoils all\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(game.unit(unit_id).unwrap().flags & 0x6f00, 0);
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nnospoils yes\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_ne!(game.unit(unit_id).unwrap().flags & 0x0100, 0);
+
+        game.unit_mut(unit_id).unwrap().guard = crate::model::GuardMode::Guard;
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nguard on\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            game.unit(unit_id).unwrap().guard,
+            crate::model::GuardMode::Guard
+        );
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nguard off\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            game.unit(unit_id).unwrap().guard,
+            crate::model::GuardMode::None
+        );
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\navoid yes\nguard false\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            game.unit(unit_id).unwrap().guard,
+            crate::model::GuardMode::Avoid
+        );
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\navoid off\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            game.unit(unit_id).unwrap().guard,
+            crate::model::GuardMode::None
+        );
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            ["Unit (10): NOSPOILS: This command is deprecated.  Use the 'SPOILS' command instead"]
+        );
+    }
+
+    #[test]
+    fn password_and_nospoils_text_match_cpp() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let (mut game, faction_id, _, _) = game_with_unit();
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\npassword Secret\npassword\nnospoils\nnospoils maybe\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert_eq!(
+            game.faction(faction_id).unwrap().events,
+            ["Password is now: Secret", "Password cleared."]
+        );
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            [
+                "Unit (10): NOSPOILS: This command is deprecated.  Use the 'SPOILS' command instead",
+                "Unit (10): NOSPOILS: Invalid value.",
+                "Unit (10): NOSPOILS: This command is deprecated.  Use the 'SPOILS' command instead",
+                "Unit (10): NOSPILS: Invalid value."
+            ]
+        );
+    }
+
+    #[test]
+    fn instant_combat_and_idle_orders_update_unit_slots() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let (mut game, faction_id, _, unit_id) = game_with_unit();
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nfind all\nmove north\nidle\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert_eq!(
+            game.unit(unit_id).unwrap().orders.find_orders,
+            [FindOrder {
+                find: 0,
+                ..FindOrder::default()
+            }]
+        );
+        assert!(matches!(
+            game.unit(unit_id).unwrap().orders.month_orders,
+            Some(OrderData::Idle(_))
+        ));
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            ["Unit (10): IDLE: Overwriting previous month-long order."]
+        );
+    }
+
+    #[test]
+    fn combat_prepare_weapon_and_armor_orders_use_ruleset_data() {
+        let ruleset = <dyn Ruleset>::from_name("neworigins").unwrap();
+        let tables = ruleset.tables();
+        let (mut game, faction_id, _, unit_id) = game_with_unit();
+
+        let combat_skill = tables
+            .skills
+            .skills
+            .iter()
+            .enumerate()
+            .find(|(_, skill)| {
+                skill.flags & (skill_flags::MAGIC | skill_flags::COMBAT)
+                    == skill_flags::MAGIC | skill_flags::COMBAT
+                    && skill.flags & skill_flags::DISABLED == 0
+                    && skill.abbreviation.is_some()
+            })
+            .map(|(index, skill)| (index, skill.abbreviation.unwrap(), skill.name.unwrap()))
+            .unwrap();
+        let prepared_item = tables
+            .item_families
+            .items
+            .iter()
+            .enumerate()
+            .find(|(_, item)| {
+                item.flags & ItemFlags::DISABLED == 0
+                    && item.abbreviation.as_deref().is_some_and(|abbreviation| {
+                        tables.item_families.battle_items.iter().any(|battle_item| {
+                            battle_item.flags & BattleItemFlags::SPECIAL != 0
+                                && battle_item.abbreviation.as_deref() == Some(abbreviation)
+                        })
+                    })
+            })
+            .map(|(index, item)| {
+                (
+                    index,
+                    item.abbreviation.as_deref().unwrap(),
+                    item.name.as_deref().unwrap(),
+                )
+            })
+            .unwrap();
+        let weapon = tables
+            .item_families
+            .items
+            .iter()
+            .enumerate()
+            .find(|(_, item)| {
+                item.flags & ItemFlags::DISABLED == 0
+                    && item.item_type & ItemTypeFlags::WEAPON != 0
+                    && item.abbreviation.is_some()
+            })
+            .map(|(index, item)| {
+                (
+                    index,
+                    item.abbreviation.as_deref().unwrap(),
+                    item.name.as_deref().unwrap(),
+                )
+            })
+            .unwrap();
+        let armor = tables
+            .item_families
+            .items
+            .iter()
+            .enumerate()
+            .find(|(_, item)| {
+                item.flags & ItemFlags::DISABLED == 0
+                    && item.item_type & ItemTypeFlags::ARMOR != 0
+                    && item.abbreviation.is_some()
+            })
+            .map(|(index, item)| {
+                (
+                    index,
+                    item.abbreviation.as_deref().unwrap(),
+                    item.name.as_deref().unwrap(),
+                )
+            })
+            .unwrap();
+
+        game.unit_mut(unit_id).unwrap().unit_type = UnitType::Mage;
+        game.unit_mut(unit_id)
+            .unwrap()
+            .items
+            .set_num(ItemId::Leaders, 5);
+        game.unit_mut(unit_id)
+            .unwrap()
+            .skills
+            .set_days(combat_skill.0, 150);
+        game.unit_mut(unit_id)
+            .unwrap()
+            .items
+            .set_num(ItemId::from_index(prepared_item.0).unwrap(), 1);
+        game.faction_mut(faction_id)
+            .unwrap()
+            .items
+            .set_num(ItemId::from_index(weapon.0).unwrap(), 1);
+        game.faction_mut(faction_id)
+            .unwrap()
+            .items
+            .set_num(ItemId::from_index(armor.0).unwrap(), 1);
+
+        let orders = format!(
+            "#atlantis 7 none\nunit 10\ncombat {}\nprepare {}\nweapon {}\narmor {}\n#end\n",
+            combat_skill.1, prepared_item.1, weapon.1, armor.1
+        );
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            orders.as_bytes(),
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        let unit = game.unit(unit_id).unwrap();
+        assert_eq!(unit.combat, -1);
+        assert_eq!(unit.ready_item, prepared_item.0 as i32);
+        assert_eq!(unit.ready_weapon, [weapon.0 as i32, -1, -1, -1]);
+        assert_eq!(unit.ready_armor, [armor.0 as i32, -1, -1, -1]);
+        assert!(
+            game.faction(faction_id).unwrap().errors.is_empty(),
+            "{:?}",
+            game.faction(faction_id).unwrap().errors
+        );
+        assert_eq!(
+            game.faction(faction_id).unwrap().events,
+            [
+                format!(
+                    "Unit (10): Combat spell set to {} and prepared item set to none.",
+                    combat_skill.2
+                ),
+                format!(
+                    "Unit (10): Prepared item set to {} and combat spell set to none.",
+                    prepared_item.2
+                ),
+                format!("Unit (10): Preferred weapons set to: {}.", weapon.2),
+                format!("Unit (10): Preferred armor set to: {}.", armor.2)
+            ]
+        );
+    }
+
+    #[test]
+    fn combat_and_loadout_errors_match_cpp_without_check_mode_mutations() {
+        let ruleset = <dyn Ruleset>::from_name("neworigins").unwrap();
+        let tables = ruleset.tables();
+        let (mut game, faction_id, _, unit_id) = game_with_unit();
+        let combat_skill = tables
+            .skills
+            .skills
+            .iter()
+            .enumerate()
+            .find(|(_, skill)| {
+                skill.flags & (skill_flags::MAGIC | skill_flags::COMBAT)
+                    == skill_flags::MAGIC | skill_flags::COMBAT
+                    && skill.abbreviation.is_some()
+            })
+            .map(|(index, skill)| (index, skill.abbreviation.unwrap()))
+            .unwrap();
+        let weapon = tables
+            .item_families
+            .items
+            .iter()
+            .enumerate()
+            .find(|(_, item)| {
+                item.flags & ItemFlags::DISABLED == 0
+                    && item.item_type & ItemTypeFlags::WEAPON != 0
+                    && item.abbreviation.is_some()
+            })
+            .map(|(index, item)| (index, item.abbreviation.as_deref().unwrap()))
+            .unwrap();
+        let armor = tables
+            .item_families
+            .items
+            .iter()
+            .enumerate()
+            .find(|(_, item)| {
+                item.flags & ItemFlags::DISABLED == 0
+                    && item.item_type & ItemTypeFlags::ARMOR != 0
+                    && item.abbreviation.is_some()
+            })
+            .map(|(index, item)| (index, item.abbreviation.as_deref().unwrap()))
+            .unwrap();
+
+        game.unit_mut(unit_id)
+            .unwrap()
+            .items
+            .set_num(ItemId::Leaders, 5);
+        game.unit_mut(unit_id)
+            .unwrap()
+            .skills
+            .set_days(combat_skill.0, 150);
+        game.unit_mut(unit_id)
+            .unwrap()
+            .items
+            .set_num(ItemId::from_index(weapon.0).unwrap(), 1);
+        game.faction_mut(faction_id)
+            .unwrap()
+            .items
+            .set_num(ItemId::from_index(weapon.0).unwrap(), 1);
+        game.faction_mut(faction_id)
+            .unwrap()
+            .items
+            .set_num(ItemId::from_index(armor.0).unwrap(), 1);
+
+        let orders = format!(
+            "#atlantis 7 none\nunit 10\ncombat not-a-skill\ncombat {}\nprepare {}\nweapon {}\narmor {}\n#end\n",
+            combat_skill.1, weapon.1, armor.1, weapon.1
+        );
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            orders.as_bytes(),
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            [
+                "Unit (10): COMBAT: Invalid skill.",
+                "Unit (10): COMBAT: That unit is not a mage.",
+                "Unit (10): PREPARE: That item cannot be prepared.",
+                "Unit (10): WEAPON: Item is not a weapon.",
+                "Unit (10): ARMOR: Item is not armor."
+            ]
+        );
+        let unit = game.unit(unit_id).unwrap();
+        assert_eq!(unit.combat, -1);
+        assert_eq!(unit.ready_item, -1);
+        assert_eq!(unit.ready_weapon, [-1; 4]);
+        assert_eq!(unit.ready_armor, [-1; 4]);
+
+        let check = parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            orders.as_bytes(),
+            OrderParseMode::Check,
+        )
+        .unwrap();
+        assert!(check.errors.is_empty());
+        assert_eq!(game.unit(unit_id).unwrap().combat, -1);
+        assert_eq!(game.unit(unit_id).unwrap().ready_item, -1);
+        assert_eq!(game.unit(unit_id).unwrap().ready_weapon, [-1; 4]);
+        assert_eq!(game.unit(unit_id).unwrap().ready_armor, [-1; 4]);
+    }
+
+    #[test]
+    fn faction_options_declarations_and_show_cap_match_cpp() {
+        let ruleset = <dyn Ruleset>::from_name("neworigins").unwrap();
+        let tables = ruleset.tables();
+        let (mut game, faction_id, _, unit_id) = game_with_unit();
+        let faction_types = ruleset.faction_types();
+        game.faction_mut(faction_id).unwrap().faction_types = faction_types
+            .iter()
+            .map(|name| ((*name).to_owned(), 1))
+            .collect();
+        game.faction_seq = 10;
+        let other_faction_id = game.add_faction(Faction::new(8, ruleset.faction_types()));
+        let removed_faction_id = game.add_faction(Faction::new(9, ruleset.faction_types()));
+        let skill = tables
+            .skills
+            .skills
+            .iter()
+            .enumerate()
+            .find(|(_, skill)| {
+                skill.flags & skill_flags::DISABLED == 0
+                    && skill.flags & skill_flags::APPRENTICE == 0
+                    && skill.abbreviation.is_some()
+            })
+            .map(|(index, skill)| (index, skill.abbreviation.unwrap()))
+            .unwrap();
+        game.faction_mut(faction_id)
+            .unwrap()
+            .skills
+            .set_days(skill.0, 1);
+
+        let show_skill = format!("show skill {} 1\n", skill.1);
+        let mut orders = format!(
+            "#atlantis 7 none\nunit 10\npassword New_Pass\noption times\noption showattitudes\noption dontshowattitudes\noption template map\naddress next@example.test\ndeclare default friendly\ndeclare 8 ally\ndeclare 9 ally\ndeclare 9\nshow skill {} 1\nfaction Magic 5 Martial 0\n",
+            skill.1
+        );
+        for _ in 0..102 {
+            orders.push_str(&show_skill);
+        }
+        orders
+            .push_str("declare 7 ally\nquit bad\nrestart \"new pass\"\nquit \"new pass\"\n#end\n");
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            orders.as_bytes(),
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        let faction = game.faction(faction_id).unwrap();
+        assert_eq!(faction.password.as_deref(), Some("New_Pass"));
+        assert_eq!(faction.address.as_deref(), Some("next@example.test"));
+        assert_eq!(faction.times, 1);
+        assert_eq!(faction.show_unit_attitudes, 0);
+        assert_eq!(faction.template_format, 3);
+        assert_eq!(faction.default_attitude, 3);
+        assert_eq!(
+            faction.attitudes,
+            [crate::model::Attitude {
+                faction_num: 8,
+                attitude: 4,
+            }]
+        );
+        assert_eq!(
+            faction.faction_types,
+            [("Martial".to_owned(), 0), ("Magic".to_owned(), 5)]
+        );
+        assert_eq!(faction.last_change, 0);
+        assert_eq!(faction.num_shows, 102);
+        assert_eq!(faction.shows.len(), 102);
+        assert_eq!(
+            faction.events,
+            [
+                "Password is now: New_Pass",
+                "Times will be sent to your faction.",
+                "Units will now have a leading sign to show your attitude to them.",
+                "Units will now have a leading minus sign regardless of your attitude to them."
+            ]
+        );
+        assert_eq!(
+            faction.errors,
+            [
+                "Unit (10): Too many SHOW orders.",
+                "DECLARE: Can't declare towards your own faction.",
+                "QUIT: Must give the correct password."
+            ]
+        );
+        assert_eq!(faction.quit, 3);
+        assert_eq!(game.faction_seq, 11);
+        assert_eq!(game.faction_ids().len(), 4);
+        let restarted = game.faction(*game.faction_ids().last().unwrap()).unwrap();
+        assert_eq!(restarted.num, 10);
+        assert_eq!(restarted.password, faction.password);
+        assert_eq!(restarted.address, faction.address);
+        assert_eq!(game.new_factions, ["Restarting next@example.test."]);
+        assert_eq!(game.faction(removed_faction_id).unwrap().attitudes.len(), 0);
+        assert_eq!(game.faction(other_faction_id).unwrap().num, 8);
+        assert_eq!(game.unit(unit_id).unwrap().num, 10);
+    }
+
+    #[test]
+    fn check_mode_show_cap_resets_for_each_faction_block() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let (mut game, _, _, _) = game_with_unit();
+        let show_orders = "show skill COMB 1\n".repeat(101);
+        let orders = format!(
+            "#atlantis 7 none\nunit 10\n{show_orders}#end\n\
+             #atlantis 7 none\nunit 10\nshow skill COMB 1\n#end\n"
+        );
+
+        let result = parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            orders.as_bytes(),
+            OrderParseMode::Check,
+        )
+        .unwrap();
+
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+    }
+
+    #[test]
+    fn show_item_forces_cpp_detail_and_keeps_partial_knowledge() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let tables = ruleset.tables();
+        let item_index = tables.item_families.parse_enabled_item("wood").unwrap();
+        let item_type = ItemId::from_index(item_index).unwrap();
+
+        let (mut partial_game, partial_faction_id, _, _) = game_with_unit();
+        partial_game
+            .faction_mut(partial_faction_id)
+            .unwrap()
+            .items
+            .set_num(item_type, 1);
+        parse_order_file(
+            &mut partial_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nshow item wood\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        let partial_faction = partial_game.faction(partial_faction_id).unwrap();
+        assert_eq!(partial_faction.items.get_num(item_type), 1);
+        assert_eq!(
+            partial_faction.item_shows,
+            [crate::model::FactionItemShow {
+                item_type,
+                full: false,
+            }]
+        );
+
+        let (mut known_game, known_faction_id, _, _) = game_with_unit();
+        known_game
+            .faction_mut(known_faction_id)
+            .unwrap()
+            .items
+            .set_num(item_type, 2);
+        parse_order_file(
+            &mut known_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nshow item wood\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        let known_faction = known_game.faction(known_faction_id).unwrap();
+        assert_eq!(known_faction.items.get_num(item_type), 2);
+        assert_eq!(
+            known_faction.item_shows,
+            [crate::model::FactionItemShow {
+                item_type,
+                full: true,
+            }]
+        );
+    }
+
+    #[test]
+    fn name_and_describe_orders_match_cpp_rules() {
+        let ruleset = <dyn Ruleset>::from_name("neworigins").unwrap();
+        let (mut game, faction_id, object_id, unit_id) = game_with_unit();
+        let object = game.object_mut(object_id).unwrap();
+        object.object_type = crate::defs::objects::O_TOWER as i32;
+        object.num = 42;
+        game.add_unit(object_id, Unit::new(11, Some(faction_id), 1, 5))
+            .unwrap();
+        game.setup_unit_nums().unwrap();
+
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nname faction NewFaction\nname unit Hero\ndescribe unit Leader_note\nname object Tower\ndescribe object Stronghold\nunit 11\nname object Borrowed\ndescribe object Borrowed\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert_eq!(
+            game.faction(faction_id).unwrap().name.as_deref(),
+            Some("NewFaction (7)")
+        );
+        assert_eq!(
+            game.unit(unit_id).unwrap().name.as_deref(),
+            Some("Hero (10)")
+        );
+        assert_eq!(
+            game.unit(unit_id).unwrap().describe.as_deref(),
+            Some("Leader_note")
+        );
+        assert_eq!(
+            game.object(object_id).unwrap().name.as_deref(),
+            Some("Tower [42]")
+        );
+        assert_eq!(
+            game.object(object_id).unwrap().describe.as_deref(),
+            Some("Stronghold")
+        );
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            [
+                "Unit (11): NAME: Unit is not owner.",
+                "Unit (11): DESCRIBE: Unit is not owner."
+            ]
+        );
+
+        let (mut check_game, check_faction_id, check_object_id, check_unit_id) = game_with_unit();
+        parse_order_file(
+            &mut check_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nname faction Changed\ndescribe unit Changed\nname object Changed\ndescribe object Changed\n#end\n",
+            OrderParseMode::Check,
+        )
+        .unwrap();
+        assert_eq!(
+            check_game
+                .faction(check_faction_id)
+                .unwrap()
+                .name
+                .as_deref(),
+            Some("Faction (7)")
+        );
+        assert_eq!(check_game.unit(check_unit_id).unwrap().describe, None);
+        assert_eq!(
+            check_game.object(check_object_id).unwrap().name.as_deref(),
+            Some("Dummy")
+        );
+    }
+
+    #[test]
+    fn city_rename_checks_structure_owner_completion_and_cost() {
+        let ruleset = <dyn Ruleset>::from_name("neworigins").unwrap();
+        let (mut game, faction_id, object_id, unit_id) = game_with_unit();
+        let region_id = game.object(object_id).unwrap().region.unwrap();
+        game.region_mut(region_id).unwrap().town = Some(TownInfo {
+            name: Some("Oldtown".to_owned()),
+            population: 10_000,
+            ..TownInfo::default()
+        });
+        game.object_mut(object_id).unwrap().object_type = crate::defs::objects::O_CASTLE as i32;
+        game.unit_mut(unit_id)
+            .unwrap()
+            .items
+            .set_num(ItemId::Silver, 50_000);
+        let other_faction_id = game.add_faction(Faction::new(8, ruleset.faction_types()));
+        let duplicate_faction_id = game.add_faction(Faction::new(8, ruleset.faction_types()));
+        game.add_unit(object_id, Unit::new(11, Some(other_faction_id), 1, 5))
+            .unwrap();
+        game.add_unit(object_id, Unit::new(12, Some(duplicate_faction_id), 1, 5))
+            .unwrap();
+        game.setup_unit_nums().unwrap();
+
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nname city Newtown\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert_eq!(
+            game.region(region_id)
+                .unwrap()
+                .town
+                .as_ref()
+                .unwrap()
+                .name
+                .as_deref(),
+            Some("Newtown")
+        );
+        assert_eq!(
+            game.unit(unit_id).unwrap().items.get_num(ItemId::Silver),
+            20_000
+        );
+        assert_eq!(
+            game.faction(faction_id).unwrap().events,
+            ["Unit (10): Renames Oldtown to Newtown."]
+        );
+        assert_eq!(
+            game.faction(other_faction_id).unwrap().events,
+            ["Unit (10) renames Oldtown to Newtown."]
+        );
+        assert!(game
+            .faction(duplicate_faction_id)
+            .unwrap()
+            .events
+            .is_empty());
+
+        let (mut too_small, _, too_small_object, _) = game_with_unit();
+        let too_small_region = too_small.object(too_small_object).unwrap().region.unwrap();
+        too_small.region_mut(too_small_region).unwrap().town = Some(TownInfo {
+            name: Some("Oldtown".to_owned()),
+            population: 10_000,
+            ..TownInfo::default()
+        });
+        too_small.object_mut(too_small_object).unwrap().object_type =
+            crate::defs::objects::O_FORT as i32;
+        parse_order_file(
+            &mut too_small,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nname city Newtown\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            too_small
+                .faction(too_small.faction_ids()[0])
+                .unwrap()
+                .errors,
+            ["Unit (10): NAME: Unit is not in a large enough structure to rename a city."]
+        );
+
+        let (mut incomplete, _, incomplete_object, _) = game_with_unit();
+        let incomplete_region = incomplete
+            .object(incomplete_object)
+            .unwrap()
+            .region
+            .unwrap();
+        incomplete.region_mut(incomplete_region).unwrap().town = Some(TownInfo {
+            name: Some("Oldtown".to_owned()),
+            population: 10_000,
+            ..TownInfo::default()
+        });
+        {
+            let object = incomplete.object_mut(incomplete_object).unwrap();
+            object.object_type = crate::defs::objects::O_CASTLE as i32;
+            object.incomplete = 1;
+        }
+        parse_order_file(
+            &mut incomplete,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nname city Newtown\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            incomplete
+                .faction(incomplete.faction_ids()[0])
+                .unwrap()
+                .errors,
+            ["Unit (10): NAME: Cannot name city.  Object is not finished."]
+        );
+        assert_eq!(
+            incomplete
+                .region(incomplete_region)
+                .unwrap()
+                .town
+                .as_ref()
+                .unwrap()
+                .name
+                .as_deref(),
+            Some("Oldtown")
+        );
+
+        let (mut poor, _, poor_object, poor_unit) = game_with_unit();
+        let poor_region = poor.object(poor_object).unwrap().region.unwrap();
+        poor.region_mut(poor_region).unwrap().town = Some(TownInfo {
+            name: Some("Oldtown".to_owned()),
+            population: 10_000,
+            ..TownInfo::default()
+        });
+        poor.object_mut(poor_object).unwrap().object_type = crate::defs::objects::O_CASTLE as i32;
+        parse_order_file(
+            &mut poor,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nname city Newtown\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            poor.faction(poor.faction_ids()[0]).unwrap().errors,
+            ["Unit (10): NAME: Unit doesn't have enough silver to rename a city."]
+        );
+        assert_eq!(
+            poor.unit(poor_unit).unwrap().items.get_num(ItemId::Silver),
+            0
+        );
+
+        let (mut non_owner, _, non_owner_object, _) = game_with_unit();
+        let non_owner_region = non_owner.object(non_owner_object).unwrap().region.unwrap();
+        non_owner.region_mut(non_owner_region).unwrap().town = Some(TownInfo {
+            name: Some("Oldtown".to_owned()),
+            population: 10_000,
+            ..TownInfo::default()
+        });
+        non_owner.object_mut(non_owner_object).unwrap().object_type =
+            crate::defs::objects::O_CASTLE as i32;
+        let non_owner_faction = non_owner.faction_ids()[0];
+        non_owner
+            .add_unit(
+                non_owner_object,
+                Unit::new(11, Some(non_owner_faction), 1, 5),
+            )
+            .unwrap();
+        non_owner.setup_unit_nums().unwrap();
+        parse_order_file(
+            &mut non_owner,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 11\nname city Newtown\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            non_owner.faction(non_owner_faction).unwrap().errors,
+            ["Unit (11): NAME: Cannot name city.  Unit is not the owner of object."]
+        );
+
+        let (mut illegal_name, _, illegal_object, _) = game_with_unit();
+        let illegal_region = illegal_name.object(illegal_object).unwrap().region.unwrap();
+        illegal_name.region_mut(illegal_region).unwrap().town = Some(TownInfo {
+            name: Some("Oldtown".to_owned()),
+            population: 10_000,
+            ..TownInfo::default()
+        });
+        illegal_name.object_mut(illegal_object).unwrap().object_type =
+            crate::defs::objects::O_CASTLE as i32;
+        parse_order_file(
+            &mut illegal_name,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nname city \"()\"\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            illegal_name
+                .faction(illegal_name.faction_ids()[0])
+                .unwrap()
+                .errors,
+            ["Unit (10): NAME: Illegal name."]
+        );
+
+        let (mut unmodifiable, _, unmodifiable_object, _) = game_with_unit();
+        parse_order_file(
+            &mut unmodifiable,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nname object Changed\ndescribe object Changed\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            unmodifiable
+                .faction(unmodifiable.faction_ids()[0])
+                .unwrap()
+                .errors,
+            ["Unit (10): NAME: Can't name this type of object."]
+        );
+        assert_eq!(
+            unmodifiable
+                .object(unmodifiable_object)
+                .unwrap()
+                .name
+                .as_deref(),
+            Some("Dummy")
+        );
+        assert_eq!(
+            unmodifiable.object(unmodifiable_object).unwrap().describe,
+            None
+        );
+    }
+
+    #[test]
     fn default_work_runs_after_each_real_order_file() {
         let (mut game, faction_id, work_unit, other_work_unit, ordered_unit, npc_unit, nexus_unit) =
             default_work_game();
@@ -5448,6 +8296,20 @@ mod tests {
             fixture!("neworigins", "11"),
             fixture!("neworigins", "12"),
             fixture!("neworigins", "13"),
+            (
+                "standard",
+                "instant-orders/1",
+                include_str!("../../../../fixtures/standard/instant-orders/turn_1/game.in"),
+                include_str!("../../../../fixtures/standard/instant-orders/turn_1/orders.3"),
+                include_str!("../../../../fixtures/standard/instant-orders/turn_1/report.3"),
+            ),
+            (
+                "neworigins",
+                "instant-orders/1",
+                include_str!("../../../../fixtures/neworigins/instant-orders/turn_1/game.in"),
+                include_str!("../../../../fixtures/neworigins/instant-orders/turn_1/orders.3"),
+                include_str!("../../../../fixtures/neworigins/instant-orders/turn_1/report.3"),
+            ),
         ];
 
         for (ruleset_name, turn, game_input, orders_input, expected_report) in fixtures {
