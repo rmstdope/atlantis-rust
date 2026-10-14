@@ -1,6 +1,6 @@
 --- a/main.cpp
 +++ b/main.cpp
-@@ -31,7 +31,707 @@
+@@ -31,7 +31,720 @@
  #include "items.h"
  #include "skills.h"
  #include "gamedata.h"
@@ -705,13 +705,33 @@
 +	return std::cout ? 0 : 1;
 +}
 +
++int DumpItemFamilyDefaults()
++{
++	dumpItems();
++	dumpRaces();
++	dumpMonsters();
++	dumpWeapons();
++	dumpArmor();
++	dumpMounts();
++	dumpBattleItems();
++	std::cout.flush();
++	return std::cout ? 0 : 1;
++}
++
  void usage()
  {
  	Awrite("atlantis new");
-@@ -52,6 +752,14 @@
+@@ -52,6 +765,21 @@
  
  	initIO();
- 
+
++	if (argc == 2 && AString(argv[1]) == "dump-item-families-default") {
++		int result = DumpItemFamilyDefaults();
++		if (result != 0) std::cerr << "Unable to write default item-family tables\n";
++		doneIO();
++		return result;
++	}
++
 +	if (argc == 2 && AString(argv[1]) == "dump-tables") {
 +		game.ModifyTablesPerRuleset();
 +		int result = DumpTables();

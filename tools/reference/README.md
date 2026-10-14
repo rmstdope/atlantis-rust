@@ -56,6 +56,10 @@ tools/reference/check-tables.py "$reference_root"
 The check validates JSONL, determinism, all `GameDefs` members, table row counts, and the known
 `SBOW` ruleset difference.
 
+`standard/standard dump-item-families-default` writes just the item, race, monster, weapon, armor,
+mount, and battle-item tables before any ruleset modifications. Its output is the baseline for
+`fixtures/tables/item-families-default.jsonl`; compare it byte-for-byte when updating that fixture.
+
 ## Recording a feature-area turn
 
 Seed `fixtures/<ruleset>/<area>/turn_N` with a complete reference fixture containing the inputs,
