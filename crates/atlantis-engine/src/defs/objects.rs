@@ -205,6 +205,7 @@ mod tests {
             parse_object("Longboat", 1, &OBJECT_DEFS, &ship),
             Some(BuildTarget::ShipItem(0))
         );
+        assert_eq!(parse_object("LB", 0, &OBJECT_DEFS, &ship), None);
         assert_eq!(
             parse_object("Tower", 0, &OBJECT_DEFS, &ship),
             Some(BuildTarget::Object(O_TOWER))
