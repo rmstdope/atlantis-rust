@@ -19,6 +19,7 @@ use crate::version::{AtlVersion, CURRENT_ATL_VER};
 
 const INITIAL_IO_SEED: i32 = 1783;
 
+#[derive(Clone)]
 pub struct LoadedGame {
     pub game: Game,
     pub ruleset: &'static dyn Ruleset,

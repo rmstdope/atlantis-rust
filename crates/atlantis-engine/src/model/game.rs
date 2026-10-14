@@ -275,6 +275,33 @@ impl Game {
         Ok(id)
     }
 
+    /// C++: `edit.cpp` removes the object from the region list without deleting the allocation.
+    pub fn detach_region_object(
+        &mut self,
+        region_id: RegionId,
+        object_id: ObjectId,
+    ) -> Result<(), ModelError> {
+        let region = self
+            .region_mut(region_id)
+            .ok_or(ModelError::MissingRegion(region_id))?;
+        let index = region
+            .object_ids
+            .iter()
+            .position(|id| *id == object_id)
+            .ok_or(ModelError::MissingObject(object_id))?;
+        region.object_ids.remove(index);
+        Ok(())
+    }
+
+    /// C++: `economy.cpp` `ARegion::AddTown`; empties the lair's unit list without deleting units.
+    pub fn empty_object_units(&mut self, object_id: ObjectId) -> Result<(), ModelError> {
+        self.object_mut(object_id)
+            .ok_or(ModelError::MissingObject(object_id))?
+            .unit_ids
+            .clear();
+        Ok(())
+    }
+
     pub fn add_unit(&mut self, object_id: ObjectId, mut unit: Unit) -> Result<UnitId, ModelError> {
         if self.object(object_id).is_none() {
             return Err(ModelError::MissingObject(object_id));
