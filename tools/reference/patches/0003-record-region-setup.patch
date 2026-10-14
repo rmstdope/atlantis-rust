@@ -12,7 +12,7 @@
  
  #include <cstddef>
  #include <iostream>
-@@ -796,10 +800,185 @@
+@@ -796,10 +800,265 @@
  	if (argc == 2 && AString(argv[1]) == "dump-tables") {
  		game.ModifyTablesPerRuleset();
  		int result = DumpTables();
@@ -189,7 +189,87 @@
 +				std::cout << "}";
 +			}
 +		}
-+		std::cout << "]}}\n";
++		std::cout << "]},\"coastal_setup\":";
++		ARegion oceanRegion;
++		oceanRegion.type = R_OCEAN;
++		ARegion coastalProbe;
++		coastalProbe.type = R_PLAIN;
++		coastalProbe.race = -1;
++		coastalProbe.neighbors[D_NORTH] = &oceanRegion;
++		RegionSetup coastalSettings;
++		coastalSettings.terrain = &TerrainDefs[R_PLAIN];
++		coastalSettings.habitat = 1000;
++		coastalSettings.prodWeight = 1.0;
++		coastalSettings.addLair = false;
++		coastalSettings.addSettlement = false;
++		coastalSettings.settlementName = "";
++		coastalSettings.settlementSize = TOWN_VILLAGE;
++		seedrandom(0);
++		coastalProbe.ManualSetup(coastalSettings);
++		std::cout << "{\"race\":" << coastalProbe.race
++				  << ",\"population\":" << coastalProbe.population
++				  << ",\"base_population\":" << coastalProbe.basepopulation
++				  << ",\"wages\":" << coastalProbe.wages
++				  << ",\"max_wages\":" << coastalProbe.maxwages
++				  << ",\"wealth\":" << coastalProbe.wealth
++				  << ",\"habitat\":" << coastalProbe.habitat
++				  << ",\"development\":" << coastalProbe.development
++				  << ",\"max_development\":" << coastalProbe.maxdevelopment
++				  << ",\"products\":[";
++		first = true;
++		{
++			forlist(&coastalProbe.products) {
++				Production *product = (Production *)elem;
++				if (!first) std::cout << ",";
++				first = false;
++				std::cout << "{\"item_type\":" << product->itemtype
++						  << ",\"base_amount\":" << product->baseamount
++						  << ",\"amount\":" << product->amount
++						  << ",\"skill\":" << product->skill
++						  << ",\"productivity\":" << product->productivity
++						  << ",\"activity\":" << product->activity << "}";
++			}
++		}
++		std::cout << "],\"markets\":[";
++		first = true;
++		{
++			forlist(&coastalProbe.markets) {
++				Market *market = (Market *)elem;
++				if (!first) std::cout << ",";
++				first = false;
++				std::cout << "{\"market_type\":" << market->type
++						  << ",\"item\":" << market->item
++						  << ",\"price\":" << market->price
++						  << ",\"amount\":" << market->amount
++						  << ",\"min_population\":" << market->minpop
++						  << ",\"max_population\":" << market->maxpop
++						  << ",\"min_amount\":" << market->minamt
++						  << ",\"max_amount\":" << market->maxamt
++						  << ",\"base_price\":" << market->baseprice
++						  << ",\"activity\":" << market->activity << "}";
++			}
++		}
++		std::cout << "]},\"town_habitat_cases\":[";
++		const int townHabitatObjects[] = { O_FARM, O_TIMBERYARD, O_ROADN };
++		for (size_t i = 0; i < sizeof(townHabitatObjects) / sizeof(int); ++i) {
++			if (i != 0) std::cout << ",";
++			ARegion habitatProbe;
++			habitatProbe.type = R_PLAIN;
++			habitatProbe.race = region.race;
++			Object *building = new Object(&habitatProbe);
++			building->type = townHabitatObjects[i];
++			habitatProbe.objects.Add(building);
++			seedrandom(424242);
++			habitatProbe.ManualSetup(settings);
++			std::cout << "{\"object_type\":" << townHabitatObjects[i]
++					  << ",\"region_habitat\":" << habitatProbe.habitat
++					  << ",\"development\":" << habitatProbe.development
++					  << ",\"max_development\":" << habitatProbe.maxdevelopment
++					  << ",\"town\":{\"population\":" << habitatProbe.town->pop
++					  << ",\"habitat\":" << habitatProbe.town->hab
++					  << ",\"development\":" << habitatProbe.town->dev << "}}";
++		}
++		std::cout << "]}\n";
 +		std::cout.flush();
 +		int result = std::cout ? 0 : 1;
 +		doneIO();

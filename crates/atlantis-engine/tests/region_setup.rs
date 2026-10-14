@@ -1,9 +1,10 @@
 use std::fs;
 use std::path::Path;
 
+use atlantis_engine::defs::objects::{O_FARM, O_ROADN, O_TIMBERYARD};
 use atlantis_engine::defs::terrains::R_PLAIN;
-use atlantis_engine::economy::{manual_setup, setup_region};
-use atlantis_engine::model::{Game, Region};
+use atlantis_engine::economy::{manual_setup, setup_prods, setup_region};
+use atlantis_engine::model::{Game, Object, Region};
 use atlantis_engine::rng::Rng;
 use atlantis_engine::ruleset::Ruleset;
 use atlantis_engine::world::TownType;
@@ -55,6 +56,75 @@ fn setup_snapshot(ruleset_name: &str) -> Value {
     let manual_region = manual_game
         .region(manual_region_id)
         .expect("manual region exists");
+
+    let mut coastal_game = Game::default();
+    let mut coastal_region = Region::default();
+    coastal_region.terrain_type = Some(R_PLAIN);
+    coastal_region.race = -1;
+    let coastal_region_id = coastal_game.add_region(coastal_region);
+    let mut coastal_rng = Rng::new(0);
+    manual_setup(
+        &mut coastal_game,
+        coastal_region_id,
+        R_PLAIN,
+        1000,
+        1.0,
+        false,
+        None,
+        ruleset.game_defs(),
+        &tables,
+        true,
+        &mut coastal_rng,
+    )
+    .expect("valid coastal manual setup probe");
+    let coastal_region = coastal_game
+        .region(coastal_region_id)
+        .expect("coastal region exists");
+
+    let mut town_habitat_cases = Vec::new();
+    for object_type in [O_FARM, O_TIMBERYARD, O_ROADN] {
+        let mut case_game = Game::default();
+        let mut case_region = Region::default();
+        case_region.terrain_type = Some(R_PLAIN);
+        case_region.race = region.race;
+        let case_region_id = case_game.add_region(case_region);
+        let mut object = Object::default();
+        object.object_type = object_type as i32;
+        case_game
+            .add_object(case_region_id, object)
+            .expect("add town habitat probe object");
+        let mut case_rng = Rng::new(424242);
+        manual_setup(
+            &mut case_game,
+            case_region_id,
+            R_PLAIN,
+            1000,
+            1.0,
+            false,
+            Some((TownType::City, "Reference City".to_owned())),
+            ruleset.game_defs(),
+            &tables,
+            false,
+            &mut case_rng,
+        )
+        .expect("valid town habitat probe");
+        let case_region = case_game
+            .region(case_region_id)
+            .expect("town habitat probe region exists");
+        let town = case_region.town.as_ref().expect("town was set");
+        town_habitat_cases.push(json!({
+            "object_type": object_type,
+            "region_habitat": case_region.habitat,
+            "development": case_region.development,
+            "max_development": case_region.max_development,
+            "town": {
+                "population": town.population,
+                "habitat": town.habitat,
+                "development": town.development,
+            },
+        }));
+    }
+
     json!({
         "seed": 424242,
         "terrain": region.terrain_type.expect("terrain set") as i32,
@@ -150,6 +220,38 @@ fn setup_snapshot(ruleset_name: &str) -> Value {
                 })
             }).collect::<Vec<_>>(),
         },
+        "coastal_setup": {
+            "race": coastal_region.race,
+            "population": coastal_region.population,
+            "base_population": coastal_region.base_population,
+            "wages": coastal_region.wages,
+            "max_wages": coastal_region.max_wages,
+            "wealth": coastal_region.wealth,
+            "habitat": coastal_region.habitat,
+            "development": coastal_region.development,
+            "max_development": coastal_region.max_development,
+            "products": coastal_region.products.iter().map(|product| json!({
+                "item_type": product.item_type,
+                "base_amount": product.base_amount,
+                "amount": product.amount,
+                "skill": product.skill,
+                "productivity": product.productivity,
+                "activity": product.activity,
+            })).collect::<Vec<_>>(),
+            "markets": coastal_region.markets.iter().map(|market| json!({
+                "market_type": market.market_type as i32,
+                "item": market.item,
+                "price": market.price,
+                "amount": market.amount,
+                "min_population": market.min_population,
+                "max_population": market.max_population,
+                "min_amount": market.min_amount,
+                "max_amount": market.max_amount,
+                "base_price": market.base_price,
+                "activity": market.activity,
+            })).collect::<Vec<_>>(),
+        },
+        "town_habitat_cases": town_habitat_cases,
     })
 }
 
@@ -169,4 +271,18 @@ fn reference_region_setup_fixtures_match() {
             "setup differs for {ruleset}"
         );
     }
+}
+
+#[test]
+fn coastal_fallback_seed_selects_the_reference_out_of_bounds_slot() {
+    let ruleset = <dyn Ruleset>::from_name("standard").expect("supported ruleset");
+    let tables = ruleset.tables();
+    let terrain = &tables.terrains[R_PLAIN];
+    let defs = *ruleset.game_defs();
+    let mut region = Region::default();
+    let mut rng = Rng::new(0);
+    setup_prods(&mut region, terrain, &defs, &tables, true, 1.0, &mut rng);
+    let choice = rng.get_random((terrain.races.len() + terrain.coastal_races.len()) as i32);
+
+    assert_eq!(choice, terrain.races.len() as i32);
 }
