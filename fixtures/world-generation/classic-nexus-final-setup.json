@@ -1,0 +1,18 @@
+{
+  "format": "atlantis-classic-nexus-final-setup-v1",
+  "seed": 1,
+  "rulesets": {
+    "standard": {
+      "terrain": 11,
+      "race": -1,
+      "population": 0,
+      "habitat": 100
+    },
+    "neworigins": {
+      "terrain": 11,
+      "race": -1,
+      "population": 0,
+      "habitat": 100
+    }
+  }
+}

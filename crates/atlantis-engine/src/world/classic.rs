@@ -138,6 +138,9 @@ pub fn create_classic_surface_level(
     width: i32,
     height: i32,
 ) -> Result<usize, WorldGenerationError> {
+    if width < 8 || height < 8 {
+        return Err(WorldGenerationError::InvalidSurfaceDimensions { width, height });
+    }
     let level = create_region_array(game, RegionLevelType::Surface, "surface", width, height)?;
     let array = game.region_arrays[level].clone();
     let definitions = ruleset.game_defs();
@@ -1003,6 +1006,9 @@ fn grow_races(
             if terrain.flags & terrain_flags::BARREN != 0 {
                 continue;
             }
+            game.region_mut(region_id)
+                .expect("generated region exists")
+                .race = -1;
             let mut wigout = 0;
 
             if is_ocean_like(region_terrain, terrain_defs) {
@@ -1164,7 +1170,8 @@ fn planar_neighbors(array: &RegionArray, x: i32, y: i32) -> [Option<RegionId>; 6
 mod tests {
     use crate::{
         defs::terrains::{
-            R_DESERT, R_FOREST, R_JUNGLE, R_MOUNTAIN, R_NEXUS, R_OCEAN, R_PLAIN, R_SWAMP, R_TUNDRA,
+            terrain_flags, R_DESERT, R_FOREST, R_JUNGLE, R_LAKE, R_MOUNTAIN, R_NEXUS, R_OCEAN,
+            R_PLAIN, R_SWAMP, R_TUNDRA,
         },
         model::{Game, RegionLevelType},
         rng::Rng,
@@ -1172,7 +1179,9 @@ mod tests {
         text,
     };
 
-    use super::{create_classic_surface_level, create_nexus_level, create_region_array};
+    use super::{
+        create_classic_surface_level, create_nexus_level, create_region_array, grow_races,
+    };
 
     #[test]
     fn planar_level_has_all_hexes_and_reference_neighbor_topology() {
@@ -1271,6 +1280,231 @@ mod tests {
             assert_eq!(region.population, 0, "{ruleset_name}");
             assert_eq!(region.object_ids().len(), 1, "{ruleset_name}");
         }
+    }
+
+    #[test]
+    fn nexus_final_setup_matches_cpp_reference_for_fixed_seed() {
+        const FINAL_SETUP_FIXTURE: &str =
+            include_str!("../../../../fixtures/world-generation/classic-nexus-final-setup.json");
+        let fixture: serde_json::Value =
+            serde_json::from_str(FINAL_SETUP_FIXTURE).expect("reference fixture is valid JSON");
+        assert_eq!(
+            fixture["format"].as_str(),
+            Some("atlantis-classic-nexus-final-setup-v1")
+        );
+        assert_eq!(fixture["seed"].as_i64(), Some(1));
+
+        for ruleset_name in ["standard", "neworigins"] {
+            let ruleset = <dyn Ruleset>::from_name(ruleset_name).expect("supported ruleset");
+            let mut game = Game::default();
+            let mut rng = Rng::new(1);
+            let level =
+                create_nexus_level(&mut game, ruleset, &mut rng, 1, 1).expect("nexus level");
+            let region_id = game.get_region_at(0, 0, level as i32).unwrap();
+            let region = game.region(region_id).unwrap();
+            let expected = &fixture["rulesets"][ruleset_name];
+
+            assert_eq!(
+                region.terrain_type,
+                Some(expected["terrain"].as_u64().unwrap() as usize),
+                "{ruleset_name} terrain"
+            );
+            assert_eq!(
+                i64::from(region.race),
+                expected["race"].as_i64().unwrap(),
+                "{ruleset_name} race"
+            );
+            assert_eq!(
+                i64::from(region.population),
+                expected["population"].as_i64().unwrap(),
+                "{ruleset_name} population"
+            );
+            assert_eq!(
+                i64::from(region.habitat),
+                expected["habitat"].as_i64().unwrap(),
+                "{ruleset_name} habitat"
+            );
+        }
+    }
+
+    #[test]
+    fn surface_final_setup_matches_cpp_reference_for_fixed_seed() {
+        const FINAL_SETUP_FIXTURE: &str =
+            include_str!("../../../../fixtures/world-generation/classic-surface-final-setup.json");
+        let fixture: serde_json::Value =
+            serde_json::from_str(FINAL_SETUP_FIXTURE).expect("reference fixture is valid JSON");
+        assert_eq!(
+            fixture["format"].as_str(),
+            Some("atlantis-classic-surface-final-setup-v1")
+        );
+        assert_eq!(fixture["seed"].as_i64(), Some(1));
+        assert_eq!(fixture["width"].as_i64(), Some(64));
+        assert_eq!(fixture["height"].as_i64(), Some(64));
+        assert_eq!(fixture["fields"].as_array().map(Vec::len), Some(17));
+
+        for ruleset_name in ["standard", "neworigins"] {
+            let ruleset = <dyn Ruleset>::from_name(ruleset_name).expect("supported ruleset");
+            let mut game = Game::default();
+            let mut rng = Rng::new(1);
+            create_nexus_level(&mut game, ruleset, &mut rng, 1, 1).expect("nexus level");
+            let level = create_classic_surface_level(&mut game, ruleset, &mut rng, 64, 64)
+                .expect("classic surface");
+            let array = &game.region_arrays[level];
+            let mut actual_regions = Vec::new();
+            for x in 0..array.x {
+                for y in 0..array.y {
+                    let Some(region_id) = array.get_region(x, y) else {
+                        continue;
+                    };
+                    let region = game.region(region_id).unwrap();
+                    let town = region.town.as_ref();
+                    actual_regions.push(vec![
+                        i64::from(x),
+                        i64::from(y),
+                        i64::try_from(region.terrain_type.unwrap()).unwrap(),
+                        i64::from(region.race),
+                        i64::from(region.population),
+                        i64::from(region.base_population),
+                        i64::from(region.wages),
+                        i64::from(region.max_wages),
+                        i64::from(region.wealth),
+                        i64::from(region.habitat),
+                        i64::from(region.development),
+                        i64::from(region.max_development),
+                        if town.is_some() { 1 } else { 0 },
+                        i64::from(town.map_or(-1, |town| town.population)),
+                        i64::from(town.map_or(-1, |town| town.habitat)),
+                        i64::from(town.map_or(-1, |town| town.development)),
+                        i64::from(town.map_or(-1, |town| town.activity)),
+                    ]);
+                }
+            }
+
+            let expected_regions = fixture["rulesets"][ruleset_name]["regions"]
+                .as_array()
+                .expect("fixture has surface regions")
+                .iter()
+                .map(|record| {
+                    record
+                        .as_str()
+                        .expect("fixture region is a compact field row")
+                        .split_whitespace()
+                        .map(|field| field.parse::<i64>().expect("fixture field is an integer"))
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(
+                actual_regions.len(),
+                expected_regions.len(),
+                "{ruleset_name}"
+            );
+            for (actual, expected) in actual_regions.iter().zip(&expected_regions) {
+                assert_eq!(
+                    actual, expected,
+                    "{ruleset_name} fixed-seed surface FinalSetup state at ({}, {})",
+                    expected[0], expected[1]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn classic_surface_rejects_dimensions_below_eight_before_allocating() {
+        let ruleset = <dyn Ruleset>::from_name("standard").expect("standard ruleset");
+        for (width, height) in [(64, 0), (64, 1), (7, 8)] {
+            let mut game = Game::default();
+            let mut rng = Rng::new(424242);
+
+            let error = create_classic_surface_level(&mut game, ruleset, &mut rng, width, height)
+                .expect_err("undersized surface must be rejected");
+
+            assert_eq!(
+                error.to_string(),
+                format!("classic surface dimensions must be at least 8x8 (got {width}x{height})")
+            );
+            assert!(game.region_ids().is_empty());
+            assert!(game.region_arrays.is_empty());
+        }
+    }
+
+    #[test]
+    fn repeated_ocean_race_anchors_reset_the_region() {
+        let ruleset = <dyn Ruleset>::from_name("standard").expect("standard ruleset");
+        let mut definitions = *ruleset.game_defs();
+        definitions.grow_races = 1;
+        definitions.lakeside_is_coastal = 1;
+        let mut tables = ruleset.tables();
+        tables.terrains[R_LAKE].flags &= !terrain_flags::BARREN;
+        tables.terrains[R_NEXUS].coastal_races = [3, 5, 10];
+
+        let mut game = Game::default();
+        let level = create_region_array(&mut game, RegionLevelType::Surface, "surface", 8, 8)
+            .expect("surface array");
+        let array = game.region_arrays[level].clone();
+        let region_ids = game.region_ids().to_vec();
+        for region_id in region_ids {
+            game.region_mut(region_id).unwrap().terrain_type = Some(R_NEXUS);
+        }
+        let target = array.get_region(3, 3).expect("ocean anchor target");
+        game.region_mut(target).unwrap().terrain_type = Some(R_LAKE);
+
+        let jiggle = 4 + 2 * definitions.grow_races;
+        let (seed, expected_race) = (1..=1000)
+            .find_map(|seed| {
+                let mut expected_rng = Rng::new(seed);
+                let mut target_anchors = 0;
+                let mut first_race = None;
+                let mut expected_race = None;
+                for x in 0..array.x {
+                    for y in 0..array.y {
+                        if (y + (x % 2) * (jiggle / 2)) % jiggle > 1 {
+                            continue;
+                        }
+                        let x_offset =
+                            x + 2 - expected_rng.get_random(3) - expected_rng.get_random(3);
+                        let Some(region_id) = array.get_region(x_offset, y) else {
+                            continue;
+                        };
+                        if region_id != target {
+                            continue;
+                        }
+
+                        target_anchors += 1;
+                        let direction = expected_rng.get_random(6) as usize;
+                        let neighbor_id = super::neighbor(&game, region_id, direction)
+                            .expect("interior neighbor");
+                        let neighbor_terrain =
+                            game.region(neighbor_id).unwrap().terrain_type.unwrap();
+                        let races = &tables.terrains[neighbor_terrain].coastal_races;
+                        let race = loop {
+                            let race = races[expected_rng.get_random(races.len() as i32) as usize];
+                            if race != -1 && !super::race_is_disabled(race, &tables.item_families) {
+                                break race;
+                            }
+                        };
+                        first_race.get_or_insert(race);
+                        expected_race = Some(race);
+                    }
+                }
+                if target_anchors > 1 && first_race != expected_race {
+                    Some((seed, expected_race.expect("repeated anchor race")))
+                } else {
+                    None
+                }
+            })
+            .expect("a seed must select the ocean target repeatedly with different races");
+
+        let mut actual_rng = Rng::new(seed);
+        grow_races(
+            &mut game,
+            &array,
+            &definitions,
+            &tables.terrains,
+            &tables.item_families,
+            &mut actual_rng,
+        );
+
+        assert_eq!(game.region(target).unwrap().race, expected_race);
     }
 
     #[test]

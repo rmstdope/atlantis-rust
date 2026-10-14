@@ -282,7 +282,9 @@ fn replay_fixtures_match_sha256_manifest() {
                 || filename_text.starts_with("fixtures/neworigins/turn_")
                 || filename_text.starts_with("fixtures/new-game/")
                 || filename_text.starts_with("fixtures/economy/region-setup/")
-                || filename_text == "fixtures/world-generation/classic-terrain-counts.json",
+                || filename_text == "fixtures/world-generation/classic-terrain-counts.json"
+                || filename_text == "fixtures/world-generation/classic-nexus-final-setup.json"
+                || filename_text == "fixtures/world-generation/classic-surface-final-setup.json",
             "unexpected file in fixture manifest: {filename:?}"
         );
         assert!(
@@ -342,9 +344,13 @@ fn replay_fixtures_match_sha256_manifest() {
         );
         actual.insert(relative_fixture);
     }
-    actual.insert(PathBuf::from(
-        "fixtures/world-generation/classic-terrain-counts.json",
-    ));
+    for filename in [
+        "classic-terrain-counts.json",
+        "classic-nexus-final-setup.json",
+        "classic-surface-final-setup.json",
+    ] {
+        actual.insert(PathBuf::from("fixtures/world-generation").join(filename));
+    }
 
     assert_eq!(
         actual,

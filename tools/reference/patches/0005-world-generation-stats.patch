@@ -7,7 +7,7 @@
  #include <string.h>
  #include "game.h"
  #include "gamedata.h"
-@@ -1037,0 +1040,15 @@
+@@ -1037,0 +1040,38 @@
 +	if (pArr->levelType == ARegionArray::LEVEL_SURFACE &&
 +			std::getenv("ATLANTIS_WORLD_STATS")) {
 +		int counts[R_NUM] = {};
@@ -23,6 +23,29 @@
 +			std::fprintf(stderr, " %d", counts[terrain]);
 +		std::fprintf(stderr, "\n");
 +	}
++	if (pArr->levelType == ARegionArray::LEVEL_NEXUS &&
++			std::getenv("ATLANTIS_WORLD_STATS")) {
++		ARegion *region = pArr->GetRegion(0, 0);
++		if (region)
++			std::fprintf(stderr, "WORLDGEN_NEXUS_FINAL_SETUP %d %d %d %d\n",
++					region->type, region->race, region->population, region->habitat);
++	}
++	if (pArr->levelType == ARegionArray::LEVEL_SURFACE &&
++			std::getenv("ATLANTIS_WORLD_STATS")) {
++		for (int sx = 0; sx < pArr->x; ++sx) {
++			for (int sy = 0; sy < pArr->y; ++sy) {
++				ARegion *region = pArr->GetRegion(sx, sy);
++				if (!region) continue;
++				TownInfo *town = region->town;
++				std::fprintf(stderr, "WORLDGEN_SURFACE_FINAL_SETUP %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
++						sx, sy, region->type, region->race, region->population, region->basepopulation,
++						region->wages, region->maxwages, region->wealth, region->habitat,
++						region->development, region->maxdevelopment, town ? 1 : 0,
++						town ? town->pop : -1, town ? town->hab : -1, town ? town->dev : -1,
++						town ? town->activity : -1);
++			}
++		}
++	}
  }
 --- a/neworigins/map.cpp
 +++ b/neworigins/map.cpp
@@ -33,7 +56,7 @@
  #include <string.h>
  #include "game.h"
  #include "gamedata.h"
-@@ -2716,0 +2719,15 @@
+@@ -2716,0 +2719,38 @@
 +	if (pArr->levelType == ARegionArray::LEVEL_SURFACE &&
 +			std::getenv("ATLANTIS_WORLD_STATS")) {
 +		int counts[R_NUM] = {};
@@ -48,5 +71,28 @@
 +		for (int terrain = 0; terrain < R_NUM; ++terrain)
 +			std::fprintf(stderr, " %d", counts[terrain]);
 +		std::fprintf(stderr, "\n");
++	}
++	if (pArr->levelType == ARegionArray::LEVEL_NEXUS &&
++			std::getenv("ATLANTIS_WORLD_STATS")) {
++		ARegion *region = pArr->GetRegion(0, 0);
++		if (region)
++			std::fprintf(stderr, "WORLDGEN_NEXUS_FINAL_SETUP %d %d %d %d\n",
++					region->type, region->race, region->population, region->habitat);
++	}
++	if (pArr->levelType == ARegionArray::LEVEL_SURFACE &&
++			std::getenv("ATLANTIS_WORLD_STATS")) {
++		for (int sx = 0; sx < pArr->x; ++sx) {
++			for (int sy = 0; sy < pArr->y; ++sy) {
++				ARegion *region = pArr->GetRegion(sx, sy);
++				if (!region) continue;
++				TownInfo *town = region->town;
++				std::fprintf(stderr, "WORLDGEN_SURFACE_FINAL_SETUP %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d %d\n",
++						sx, sy, region->type, region->race, region->population, region->basepopulation,
++						region->wages, region->maxwages, region->wealth, region->habitat,
++						region->development, region->maxdevelopment, town ? 1 : 0,
++						town ? town->pop : -1, town ? town->hab : -1, town ? town->dev : -1,
++						town ? town->activity : -1);
++			}
++		}
 +	}
  }

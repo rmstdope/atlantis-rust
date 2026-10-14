@@ -9,6 +9,7 @@ pub use settlements::{make_starting_city, TownType};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorldGenerationError {
     RegionArray(crate::model::RegionArrayError),
+    InvalidSurfaceDimensions { width: i32, height: i32 },
     RegionSetup(SetupError),
     MissingGeneratedName(i32),
     RegionNumberOverflow,
@@ -18,6 +19,10 @@ impl std::fmt::Display for WorldGenerationError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::RegionArray(error) => error.fmt(formatter),
+            Self::InvalidSurfaceDimensions { width, height } => write!(
+                formatter,
+                "classic surface dimensions must be at least 8x8 (got {width}x{height})"
+            ),
             Self::RegionSetup(error) => write!(formatter, "region setup failed: {error:?}"),
             Self::MissingGeneratedName(index) => {
                 write!(formatter, "generated region name {index} does not exist")
