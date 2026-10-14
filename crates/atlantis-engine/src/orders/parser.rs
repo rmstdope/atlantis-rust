@@ -183,11 +183,16 @@ impl<'a> Parser<'a> {
                     if autotax {
                         unit.taxing = TAX_AUTO;
                     } else if self.defs.default_work_order != 0 {
-                        let mut order = super::ProduceOrder::default();
-                        order.item = ItemId::Silver.index() as i32;
-                        order.skill = -1;
-                        order.target = 0;
-                        order.order.quiet = 1;
+                        let order = super::ProduceOrder {
+                            order: super::Order {
+                                quiet: 1,
+                                ..super::Order::new(OrderVerb::Produce)
+                            },
+                            item: ItemId::Silver.index() as i32,
+                            skill: -1,
+                            target: 0,
+                            ..super::ProduceOrder::default()
+                        };
                         unit.orders.month_orders = Some(super::OrderData::Produce(order));
                     }
                 }
