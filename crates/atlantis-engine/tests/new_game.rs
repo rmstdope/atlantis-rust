@@ -163,14 +163,16 @@ fn fixed_map(ruleset: &'static dyn Ruleset) -> (Game, atlantis_engine::model::Re
     );
     let nexus = add_fixture_region(
         &mut game,
-        nexus_array,
-        1,
-        0,
-        0,
-        0,
-        terrains::R_NEXUS,
-        0,
-        move_points,
+        FixtureRegionSpec {
+            array_index: nexus_array,
+            number: 1,
+            x: 0,
+            y: 0,
+            z: 0,
+            terrain: terrains::R_NEXUS,
+            town_population: 0,
+            move_points,
+        },
     );
 
     let mut region_number = 2;
@@ -191,14 +193,16 @@ fn fixed_map(ruleset: &'static dyn Ruleset) -> (Game, atlantis_engine::model::Re
             };
             let region = add_fixture_region(
                 &mut game,
-                surface_array,
-                region_number,
-                x,
-                y,
-                1,
-                terrain,
-                town_population,
-                move_points,
+                FixtureRegionSpec {
+                    array_index: surface_array,
+                    number: region_number,
+                    x,
+                    y,
+                    z: 1,
+                    terrain,
+                    town_population,
+                    move_points,
+                },
             );
             region_number += 1;
             if (x, y) == (2, 0) {
@@ -213,8 +217,7 @@ fn fixed_map(ruleset: &'static dyn Ruleset) -> (Game, atlantis_engine::model::Re
     (game, nexus)
 }
 
-fn add_fixture_region(
-    game: &mut Game,
+struct FixtureRegionSpec {
     array_index: usize,
     number: i32,
     x: i32,
@@ -223,7 +226,22 @@ fn add_fixture_region(
     terrain: usize,
     town_population: i32,
     move_points: i32,
+}
+
+fn add_fixture_region(
+    game: &mut Game,
+    spec: FixtureRegionSpec,
 ) -> atlantis_engine::model::RegionId {
+    let FixtureRegionSpec {
+        array_index,
+        number,
+        x,
+        y,
+        z,
+        terrain,
+        town_population,
+        move_points,
+    } = spec;
     let town = (town_population != 0).then(|| TownInfo {
         name: Some("Fixture Town".to_owned()),
         population: town_population,
@@ -283,7 +301,7 @@ fn snapshot(game: &Game) -> String {
             .map(|item| format!("{}:{}", item.item_type.index(), item.num))
             .collect::<Vec<_>>()
             .join(",");
-        let skills = snapshot_skills(&faction.skills.entries());
+        let skills = snapshot_skills(faction.skills.entries());
         let shows = faction
             .shows
             .iter()
@@ -332,7 +350,7 @@ fn snapshot(game: &Game) -> String {
                     .map(|item| format!("{}:{}", item.item_type.index(), item.num))
                     .collect::<Vec<_>>()
                     .join(",");
-                let skills = snapshot_skills(&unit.skills.entries());
+                let skills = snapshot_skills(unit.skills.entries());
                 writeln!(
                     output,
                     "UNIT|{}|{}|{}|{}|{}|{}|{}|{}|{},{},{}|{}|I{}|S{}",

@@ -723,10 +723,10 @@ fn town_type(region: &crate::model::Region, city_population: i32) -> i32 {
     }
 }
 
-fn terrain_for<'a>(
+fn terrain_for(
     terrain_id: Option<usize>,
-    tables: &'a RulesetTables,
-) -> Result<&'a TerrainDef, NewGameError> {
+    tables: &RulesetTables,
+) -> Result<&TerrainDef, NewGameError> {
     terrain_id
         .and_then(|index| tables.terrains.get(index))
         .ok_or(NewGameError::MissingTerrain(
@@ -810,7 +810,7 @@ fn monster_number(tables: &RulesetTables, item: ItemId) -> Result<i32, NewGameEr
     Ok(monster_for_item(item, tables)?.number)
 }
 
-fn monster_name<'a>(tables: &'a RulesetTables, item: ItemId) -> Result<&'a str, NewGameError> {
+fn monster_name(tables: &RulesetTables, item: ItemId) -> Result<&str, NewGameError> {
     monster_for_item(item, tables)?
         .name
         .as_deref()
