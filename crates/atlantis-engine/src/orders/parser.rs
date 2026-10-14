@@ -9,12 +9,56 @@ use crate::model::{Faction, FactionId, Game, ModelError, ObjectId, UnitId, UnitT
 use crate::ruleset::Ruleset;
 use crate::text::{get_at, get_token, is_equal, value, TextInput};
 
-use super::{parse_order_verb, MoveDir, MoveOrder, OrderData, OrderVerb, SailOrder, TurnOrder};
+use super::{
+    parse_order_verb, parse_unit_id, CastIntOrder, CastMindOrder, CastOrder, CastOrderData,
+    CastRegionOrder, CastTransmuteOrder, CastUnitsOrder, MoveDir, MoveOrder, OrderData, OrderVerb,
+    SailOrder, TeleportOrder, TurnOrder,
+};
 
 const FLAG_AUTOTAX: i32 = 0x0004;
 const TAX_AUTO: i32 = 3;
 const TAX_TAX: i32 = 1;
 const TAX_PILLAGE: i32 = 2;
+const GENERIC_CAST_SPELL_NAMES: &[&str] = &[
+    "construct portal",
+    "enchant swords",
+    "enchant armor",
+    "enchant shields",
+    "construct gate",
+    "engrave runes of warding",
+    "summon imps",
+    "summon demon",
+    "summon balrog",
+    "summon skeletons",
+    "raise undead",
+    "summon lich",
+    "dragon lore",
+    "wolf lore",
+    "earth lore",
+    "summon wind",
+    "create ring of invisibility",
+    "create cloak of invulnerability",
+    "create staff of fire",
+    "create staff of lightning",
+    "create amulet of true seeing",
+    "create amulet of protection",
+    "create runesword",
+    "create shieldstone",
+    "create magic carpet",
+    "create flaming sword",
+    "create food",
+    "create aegis",
+    "create windchime",
+    "create gate crystal",
+    "create staff of healing",
+    "create scrying orb",
+    "create cornucopia",
+    "create book of exorcism",
+    "create holy symbol",
+    "create censer",
+    "blasphemous ritual",
+    "phantasmal entertainment",
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OrderParseMode {
@@ -78,34 +122,40 @@ impl From<ModelError> for OrderParseError {
 pub fn parse_order_file(
     game: &mut Game,
     defs: &GameDefs,
+    tables: &RulesetTables,
     input: &[u8],
     mode: OrderParseMode,
 ) -> Result<OrderParseResult, OrderParseError> {
-    Parser::new(game, defs, mode).parse(input)
+    Parser::new(game, defs, tables, mode).parse(input)
 }
 
 struct Parser<'a> {
     game: &'a mut Game,
     defs: &'a GameDefs,
+    tables: &'a RulesetTables,
     mode: OrderParseMode,
     result: OrderParseResult,
     faction_id: Option<FactionId>,
     unit_stack: Vec<UnitId>,
     indent: i32,
-    ruleset_tables: Option<RulesetTables>,
 }
 
 impl<'a> Parser<'a> {
-    fn new(game: &'a mut Game, defs: &'a GameDefs, mode: OrderParseMode) -> Self {
+    fn new(
+        game: &'a mut Game,
+        defs: &'a GameDefs,
+        tables: &'a RulesetTables,
+        mode: OrderParseMode,
+    ) -> Self {
         Self {
             game,
             defs,
+            tables,
             mode,
             result: OrderParseResult::default(),
             faction_id: None,
             unit_stack: Vec::new(),
             indent: 0,
-            ruleset_tables: None,
         }
     }
 
@@ -750,6 +800,7 @@ impl<'a> Parser<'a> {
         }
 
         match verb {
+            Some(OrderVerb::Cast) => self.parse_cast_order(unit_id, line),
             Some(verb @ (OrderVerb::Move | OrderVerb::Advance | OrderVerb::Sail)) => {
                 self.parse_movement_order(unit_id, verb, line);
             }
@@ -801,6 +852,512 @@ impl<'a> Parser<'a> {
                 days: 0,
                 level,
                 ..super::StudyOrder::default()
+            }));
+        }
+    }
+
+    /// C++: `spells.cpp` `Game::ProcessCastOrder`.
+    fn parse_cast_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(token) = get_token(line) else {
+            self.record_unit_error(unit_id, "CAST: No skill given.");
+            return;
+        };
+        let Some(skill_index) =
+            crate::defs::skills::parse_skill(&self.tables.skills.skills, &token)
+        else {
+            self.record_unit_error(unit_id, "CAST: Invalid skill.");
+            return;
+        };
+        let skill = self.tables.skills.skills[skill_index];
+        if skill.flags & skill_flags::MAGIC == 0 {
+            self.record_unit_error(unit_id, "CAST: That is not a magic skill.");
+            return;
+        }
+        if skill.flags & skill_flags::CAST == 0 {
+            self.record_unit_error(unit_id, "CAST: That skill cannot be CAST.");
+            return;
+        }
+
+        if self.mode == OrderParseMode::Check {
+            return;
+        }
+        self.parse_cast_spell(unit_id, skill_index, line);
+    }
+
+    /// C++: `spells.cpp` `Game::ProcessCastOrder`.
+    fn parse_cast_spell(&mut self, unit_id: UnitId, skill_index: usize, line: &mut String) {
+        let Some(spell_name) = self.tables.skills.skills[skill_index].name else {
+            return;
+        };
+        let spell = skill_index as i32;
+
+        if is_equal(spell_name, "mind reading") {
+            let Some(id) = parse_unit_id(line) else {
+                self.record_unit_error(unit_id, "CAST: No unit specified.");
+                return;
+            };
+            let order = CastMindOrder {
+                spell,
+                level: 1,
+                id: Some(id),
+                ..CastMindOrder::default()
+            };
+            self.replace_cast_order(unit_id, CastOrderData::Mind(order));
+        } else if is_equal(spell_name, "farsight")
+            || is_equal(spell_name, "weather lore")
+            || (is_equal(spell_name, "clear skies")
+                && self.spell_range_flags(skill_index).is_some())
+        {
+            self.parse_region_spell(unit_id, skill_index, line, false);
+        } else if is_equal(spell_name, "teleportation") {
+            self.parse_region_spell(unit_id, skill_index, line, true);
+        } else if is_equal(spell_name, "invisibility") {
+            self.parse_invisibility(unit_id, skill_index, line);
+        } else if is_equal(spell_name, "gate lore") {
+            self.parse_gate_lore(unit_id, skill_index, line);
+        } else if is_equal(spell_name, "portal lore") {
+            self.parse_portal_lore(unit_id, skill_index, line);
+        } else if is_equal(spell_name, "bird lore") {
+            self.parse_bird_lore(unit_id, skill_index, line);
+        } else if is_equal(spell_name, "create phantasmal beasts") {
+            self.parse_phantasmal_beasts(unit_id, skill_index, line);
+        } else if is_equal(spell_name, "create phantasmal undead") {
+            self.parse_phantasmal_undead(unit_id, skill_index, line);
+        } else if is_equal(spell_name, "create phantasmal demons") {
+            self.parse_phantasmal_demons(unit_id, skill_index, line);
+        } else if is_equal(spell_name, "transmutation") {
+            self.parse_transmutation(unit_id, skill_index, line);
+        } else if GENERIC_CAST_SPELL_NAMES
+            .iter()
+            .any(|name| is_equal(spell_name, name))
+            || (is_equal(spell_name, "clear skies")
+                && self.spell_range_flags(skill_index).is_none())
+        {
+            let order = CastOrder {
+                spell,
+                level: 1,
+                ..CastOrder::default()
+            };
+            self.replace_cast_order(unit_id, CastOrderData::Cast(order));
+        }
+    }
+
+    /// C++: `spells.cpp` `Game::ProcessInvisibility`.
+    fn parse_invisibility(&mut self, unit_id: UnitId, spell: usize, line: &mut String) {
+        let Some(token) = get_token(line) else {
+            self.record_unit_error(unit_id, "CAST: Must specify units to render invisible.");
+            return;
+        };
+        if !is_equal(&token, "units") {
+            self.record_unit_error(unit_id, "CAST: Must specify units to render invisible.");
+            return;
+        }
+
+        let existing =
+            self.game
+                .unit(unit_id)
+                .and_then(|unit| match unit.orders.cast_orders.as_ref()? {
+                    CastOrderData::Units(order)
+                        if order.spell == spell as i32 && order.level == 1 =>
+                    {
+                        Some(order.clone())
+                    }
+                    _ => None,
+                });
+        let mut order = match existing {
+            Some(order) => order,
+            None => {
+                self.clear_cast_orders(unit_id);
+                CastUnitsOrder {
+                    spell: spell as i32,
+                    level: 1,
+                    ..CastUnitsOrder::default()
+                }
+            }
+        };
+        while let Some(id) = parse_unit_id(line) {
+            order.units.push(id);
+        }
+        if let Some(unit) = self.game.unit_mut(unit_id) {
+            unit.orders.cast_orders = Some(CastOrderData::Units(order));
+        }
+    }
+
+    /// C++: `spells.cpp` `Game::ProcessCastGateLore`.
+    fn parse_gate_lore(&mut self, unit_id: UnitId, spell: usize, line: &mut String) {
+        let Some(token) = get_token(line) else {
+            self.record_unit_error(unit_id, "CAST: Missing argument.");
+            return;
+        };
+        if is_equal(&token, "gate") {
+            let Some(gate_token) = get_token(line) else {
+                self.record_unit_error(unit_id, "CAST: Requires a target gate.");
+                return;
+            };
+            let gate = value(&gate_token);
+            if gate < 1 {
+                self.record_unit_error(unit_id, "CAST: Requires a target gate.");
+                return;
+            }
+
+            let existing = self.game.unit(unit_id).and_then(|unit| {
+                unit.orders
+                    .teleport_orders
+                    .as_ref()
+                    .filter(|order| order.spell == spell as i32 && order.gate == gate)
+                    .cloned()
+            });
+            let mut order = match existing {
+                Some(order) => order,
+                None => {
+                    self.clear_cast_orders(unit_id);
+                    TeleportOrder::default()
+                }
+            };
+            order.gate = gate;
+            order.spell = spell as i32;
+            order.level = 3;
+            if get_token(line).is_some_and(|token| is_equal(&token, "units")) {
+                while let Some(id) = parse_unit_id(line) {
+                    order.units.push(id);
+                }
+            }
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                unit.orders.teleport_orders = Some(order);
+            }
+            return;
+        }
+
+        if is_equal(&token, "random") {
+            let existing = self.game.unit(unit_id).and_then(|unit| {
+                unit.orders
+                    .teleport_orders
+                    .as_ref()
+                    .filter(|order| order.spell == spell as i32 && order.gate == -1)
+                    .cloned()
+            });
+            let mut order = match existing {
+                Some(order) => order,
+                None => {
+                    self.clear_cast_orders(unit_id);
+                    TeleportOrder::default()
+                }
+            };
+            order.gate = -1;
+            order.spell = spell as i32;
+            order.level = 1;
+
+            if let Some(mut token) = get_token(line) {
+                if is_equal(&token, "level") {
+                    order.gate = -2;
+                    order.level = 2;
+                    token = match get_token(line) {
+                        Some(token) => token,
+                        None => {
+                            if let Some(unit) = self.game.unit_mut(unit_id) {
+                                unit.orders.teleport_orders = Some(order);
+                            }
+                            return;
+                        }
+                    };
+                }
+                if is_equal(&token, "units") {
+                    while let Some(id) = parse_unit_id(line) {
+                        order.units.push(id);
+                    }
+                }
+            }
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                unit.orders.teleport_orders = Some(order);
+            }
+            return;
+        }
+
+        if is_equal(&token, "detect") {
+            self.replace_cast_order(
+                unit_id,
+                CastOrderData::Cast(CastOrder {
+                    spell: spell as i32,
+                    level: 2,
+                    ..CastOrder::default()
+                }),
+            );
+            return;
+        }
+
+        self.record_unit_error(unit_id, "CAST: Invalid argument.");
+    }
+
+    /// C++: `spells.cpp` `Game::ProcessCastPortalLore`.
+    fn parse_portal_lore(&mut self, unit_id: UnitId, spell: usize, line: &mut String) {
+        let Some(gate_token) = get_token(line) else {
+            self.record_unit_error(unit_id, "CAST: Requires a target mage.");
+            return;
+        };
+        let gate = value(&gate_token);
+        let Some(units_token) = get_token(line) else {
+            self.record_unit_error(unit_id, "CAST: No units to teleport.");
+            return;
+        };
+        if !is_equal(&units_token, "units") {
+            self.record_unit_error(unit_id, "CAST: No units to teleport.");
+            return;
+        }
+
+        let existing = self.game.unit(unit_id).and_then(|unit| {
+            unit.orders
+                .teleport_orders
+                .as_ref()
+                .filter(|order| order.spell == spell as i32)
+                .cloned()
+        });
+        let mut order = match existing {
+            Some(order) => order,
+            None => {
+                self.clear_cast_orders(unit_id);
+                TeleportOrder::default()
+            }
+        };
+        order.gate = gate;
+        order.spell = spell as i32;
+        order.level = 1;
+        while let Some(id) = parse_unit_id(line) {
+            order.units.push(id);
+        }
+        if let Some(unit) = self.game.unit_mut(unit_id) {
+            unit.orders.teleport_orders = Some(order);
+        }
+    }
+
+    /// C++: `spells.cpp` `Game::ProcessBirdLore`.
+    fn parse_bird_lore(&mut self, unit_id: UnitId, spell: usize, line: &mut String) {
+        let Some(token) = get_token(line) else {
+            self.record_unit_error(unit_id, "CAST: Missing arguments.");
+            return;
+        };
+        let mut order = CastIntOrder {
+            spell: spell as i32,
+            ..CastIntOrder::default()
+        };
+        if is_equal(&token, "eagle") {
+            order.level = 3;
+        } else if is_equal(&token, "direction") {
+            let Some(token) = get_token(line) else {
+                self.record_unit_error(unit_id, "CAST: Missing arguments.");
+                return;
+            };
+            let Some(direction) = parse_dir(&token) else {
+                self.record_unit_error(unit_id, "CAST: Invalid direction.");
+                return;
+            };
+            if direction > crate::defs::strings::DIRECTION_NAMES.len() as i32 {
+                self.record_unit_error(unit_id, "CAST: Invalid direction.");
+                return;
+            }
+            order.level = 1;
+            order.target = direction;
+        } else {
+            self.record_unit_error(unit_id, "CAST: Invalid arguments.");
+            return;
+        }
+        self.replace_cast_order(unit_id, CastOrderData::Int(order));
+    }
+
+    /// C++: `spells.cpp` `Game::ProcessPhanBeasts`.
+    fn parse_phantasmal_beasts(&mut self, unit_id: UnitId, spell: usize, line: &mut String) {
+        let Some(token) = get_token(line) else {
+            self.record_unit_error(unit_id, "CAST: Must specify which illusion to summon.");
+            return;
+        };
+        let level = if is_equal(&token, "wolf") || is_equal(&token, "wolves") {
+            1
+        } else if is_equal(&token, "eagle") || is_equal(&token, "eagles") {
+            2
+        } else if is_equal(&token, "dragon") {
+            3
+        } else {
+            self.record_unit_error(unit_id, "CAST: Must specify which illusion to summon.");
+            return;
+        };
+        let target = get_token(line).map_or(1, |token| value(&token));
+        self.replace_cast_order(
+            unit_id,
+            CastOrderData::Int(CastIntOrder {
+                spell: spell as i32,
+                level,
+                target,
+                ..CastIntOrder::default()
+            }),
+        );
+    }
+
+    /// C++: `spells.cpp` `Game::ProcessPhanUndead`.
+    fn parse_phantasmal_undead(&mut self, unit_id: UnitId, spell: usize, line: &mut String) {
+        let Some(token) = get_token(line) else {
+            self.record_unit_error(unit_id, "CAST: Must specify which illusion to summon.");
+            return;
+        };
+        let level = if is_equal(&token, "skeleton") || is_equal(&token, "skeletons") {
+            1
+        } else if is_equal(&token, "undead") {
+            2
+        } else if is_equal(&token, "lich") || is_equal(&token, "liches") {
+            3
+        } else {
+            self.record_unit_error(unit_id, "CAST: Must specify which illusion to summon.");
+            return;
+        };
+        let target = get_token(line).map_or(1, |token| value(&token));
+        self.replace_cast_order(
+            unit_id,
+            CastOrderData::Int(CastIntOrder {
+                spell: spell as i32,
+                level,
+                target,
+                ..CastIntOrder::default()
+            }),
+        );
+    }
+
+    /// C++: `spells.cpp` `Game::ProcessPhanDemons`.
+    fn parse_phantasmal_demons(&mut self, unit_id: UnitId, spell: usize, line: &mut String) {
+        let Some(token) = get_token(line) else {
+            self.record_unit_error(unit_id, "CAST: Illusion to summon must be given.");
+            return;
+        };
+        let level = if is_equal(&token, "imp") || is_equal(&token, "imps") {
+            1
+        } else if is_equal(&token, "demon") || is_equal(&token, "demons") {
+            2
+        } else if is_equal(&token, "balrog") || is_equal(&token, "balrogs") {
+            3
+        } else {
+            self.record_unit_error(unit_id, "CAST: Can't summon that illusion.");
+            return;
+        };
+        let target = get_token(line).map_or(1, |token| value(&token));
+        self.replace_cast_order(
+            unit_id,
+            CastOrderData::Int(CastIntOrder {
+                spell: spell as i32,
+                level,
+                target,
+                ..CastIntOrder::default()
+            }),
+        );
+    }
+
+    /// C++: `spells.cpp` `Game::ProcessTransmutation`.
+    fn parse_transmutation(&mut self, unit_id: UnitId, spell: usize, line: &mut String) {
+        let Some(mut token) = get_token(line) else {
+            self.record_unit_error(unit_id, "CAST: You must specify what you wish to create.");
+            return;
+        };
+        let mut number = -1;
+        if value(&token) > 0 {
+            number = value(&token);
+            let Some(item_token) = get_token(line) else {
+                self.record_unit_error(unit_id, "CAST: You must specify what you wish to create.");
+                return;
+            };
+            token = item_token;
+        }
+        let Some(item) = self.tables.item_families.parse_enabled_item(&token) else {
+            self.record_unit_error(unit_id, "CAST: You must specify what you wish to create.");
+            return;
+        };
+        let item_name = self.tables.item_families.items[item]
+            .name
+            .as_deref()
+            .unwrap_or("");
+        let level = if is_equal(item_name, "mithril") || is_equal(item_name, "rootstone") {
+            1
+        } else if is_equal(item_name, "ironwood") {
+            2
+        } else if is_equal(item_name, "floater hide") {
+            3
+        } else if is_equal(item_name, "yew") {
+            4
+        } else if is_equal(item_name, "winged horse") || is_equal(item_name, "admantium") {
+            5
+        } else {
+            self.record_unit_error(unit_id, "CAST: Can't create that by transmutation.");
+            return;
+        };
+        self.replace_cast_order(
+            unit_id,
+            CastOrderData::Transmute(CastTransmuteOrder {
+                spell: spell as i32,
+                level,
+                item: item as i32,
+                number,
+                ..CastTransmuteOrder::default()
+            }),
+        );
+    }
+
+    /// C++: `spells.cpp` `Game::ProcessRegionSpell`.
+    fn parse_region_spell(
+        &mut self,
+        unit_id: UnitId,
+        spell: usize,
+        line: &mut String,
+        teleport: bool,
+    ) {
+        let range_flags = self.spell_range_flags(spell).unwrap_or(0);
+        let mut coordinates = self.caster_coordinates(unit_id);
+        if let Some(token) = get_token(line) {
+            if is_equal(&token, "region") {
+                let Some(x) = get_token(line) else {
+                    self.record_unit_error(unit_id, "CAST: Region X coordinate not specified.");
+                    return;
+                };
+                coordinates.0 = value(&x);
+                let Some(y) = get_token(line) else {
+                    self.record_unit_error(unit_id, "CAST: Region Y coordinate not specified.");
+                    return;
+                };
+                coordinates.1 = value(&y);
+
+                if range_flags & crate::defs::skills::range_flags::CROSS_LEVELS != 0 {
+                    if let Some(z) = get_token(line) {
+                        coordinates.2 = value(&z);
+                        let z_limit = self.defs.underworld_levels
+                            + self.defs.underdeep_levels
+                            + self.defs.abyss_level
+                            + 2;
+                        if coordinates.2 < 0 || coordinates.2 >= z_limit {
+                            self.record_unit_error(
+                                unit_id,
+                                "CAST: Invalid Z coordinate specified.",
+                            );
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        self.clear_cast_orders(unit_id);
+        if teleport {
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                unit.orders.teleport_orders = Some(TeleportOrder {
+                    spell: spell as i32,
+                    level: 1,
+                    xloc: coordinates.0,
+                    yloc: coordinates.1,
+                    zloc: coordinates.2,
+                    ..TeleportOrder::default()
+                });
+            }
+        } else if let Some(unit) = self.game.unit_mut(unit_id) {
+            unit.orders.cast_orders = Some(CastOrderData::Region(CastRegionOrder {
+                spell: spell as i32,
+                level: 1,
+                xloc: coordinates.0,
+                yloc: coordinates.1,
+                zloc: coordinates.2,
+                ..CastRegionOrder::default()
             }));
         }
     }
@@ -1016,6 +1573,44 @@ impl<'a> Parser<'a> {
             unit_id,
             &format!("{verb}: Overwriting previous {delayed}month-long order."),
         );
+    }
+
+    fn caster_coordinates(&self, unit_id: UnitId) -> (i32, i32, i32) {
+        let region_id = self
+            .game
+            .unit(unit_id)
+            .and_then(|unit| unit.object)
+            .and_then(|object_id| self.game.object(object_id))
+            .and_then(|object| object.region)
+            .expect("a selected caster belongs to a region");
+        let region = self
+            .game
+            .region(region_id)
+            .expect("a selected caster's region exists");
+        (region.xloc, region.yloc, region.zloc)
+    }
+
+    fn spell_range_flags(&self, spell: usize) -> Option<i32> {
+        let range = self.tables.skills.skills.get(spell)?.range?;
+        self.tables
+            .skills
+            .ranges
+            .get(range)
+            .map(|range| range.flags)
+    }
+
+    fn clear_cast_orders(&mut self, unit_id: UnitId) {
+        if let Some(unit) = self.game.unit_mut(unit_id) {
+            unit.orders.cast_orders = None;
+            unit.orders.teleport_orders = None;
+        }
+    }
+
+    fn replace_cast_order(&mut self, unit_id: UnitId, order: CastOrderData) {
+        self.clear_cast_orders(unit_id);
+        if let Some(unit) = self.game.unit_mut(unit_id) {
+            unit.orders.cast_orders = Some(order);
+        }
     }
 
     /// C++: `parseorders.cpp` `Game::ProcessAdvanceOrder`, `ProcessMoveOrder`, and `ProcessSailOrder`.
@@ -1236,17 +1831,8 @@ impl<'a> Parser<'a> {
         self.unit_stack.last().copied()
     }
 
-    fn ruleset_tables(&mut self) -> &RulesetTables {
-        if self.ruleset_tables.is_none() {
-            self.ruleset_tables = Some(
-                <dyn Ruleset>::from_name(self.defs.ruleset_name)
-                    .expect("parser ruleset is supported")
-                    .tables(),
-            );
-        }
-        self.ruleset_tables
-            .as_ref()
-            .expect("ruleset tables were initialized")
+    fn ruleset_tables(&self) -> &RulesetTables {
+        self.tables
     }
 
     fn record_unit_error(&mut self, unit_id: UnitId, message: &str) {
@@ -1616,14 +2202,869 @@ fn skill_level(unit: &crate::model::Unit, abbreviation: &str, tables: &RulesetTa
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_order_file, OrderParseMode};
-    use crate::defs::ItemId;
+    use super::{parse_order_file as parse_order_file_with_tables, OrderParseMode};
+    use crate::defs::{skills::skill_flags, GameDefs, ItemId};
     use crate::model::{Faction, Game, Object, Region, Unit};
     use crate::orders::{
-        MoveDir, MoveOrder, OrderData, OrderVerb, TurnOrder, MOVE_ENTER, MOVE_IN, MOVE_OUT,
-        MOVE_PAUSE,
+        CastIntOrder, CastOrder, CastOrderData, CastRegionOrder, CastTransmuteOrder,
+        CastUnitsOrder, MoveDir, MoveOrder, OrderData, OrderUnitId, OrderVerb, TeleportOrder,
+        TurnOrder, MOVE_ENTER, MOVE_IN, MOVE_OUT, MOVE_PAUSE,
     };
     use crate::ruleset::Ruleset;
+    use crate::text::is_equal;
+
+    fn parse_order_file(
+        game: &mut Game,
+        defs: &GameDefs,
+        input: &[u8],
+        mode: OrderParseMode,
+    ) -> Result<super::OrderParseResult, super::OrderParseError> {
+        let ruleset = <dyn Ruleset>::from_name(defs.ruleset_name)
+            .expect("parser test uses a supported ruleset");
+        let tables = ruleset.tables();
+        parse_order_file_with_tables(game, defs, &tables, input, mode)
+    }
+
+    #[test]
+    fn cast_validation_matches_cpp_for_both_rulesets() {
+        for ruleset_name in ["standard", "neworigins"] {
+            let ruleset = <dyn Ruleset>::from_name(ruleset_name).unwrap();
+            let tables = ruleset.tables();
+            let skills = &tables.skills.skills;
+            let non_magic_skill = skills
+                .iter()
+                .find(|skill| {
+                    skill.abbreviation.is_some()
+                        && skill.flags & (skill_flags::MAGIC | skill_flags::DISABLED) == 0
+                })
+                .and_then(|skill| skill.abbreviation)
+                .expect("ruleset has an enabled non-magic skill");
+            let magic_non_cast_skill = skills
+                .iter()
+                .find(|skill| {
+                    skill.abbreviation.is_some()
+                        && skill.flags & skill_flags::MAGIC != 0
+                        && skill.flags & (skill_flags::CAST | skill_flags::DISABLED) == 0
+                })
+                .and_then(|skill| skill.abbreviation)
+                .expect("ruleset has a magic skill that is not castable");
+            let castable_skill = skills
+                .iter()
+                .find(|skill| {
+                    skill.abbreviation.is_some()
+                        && skill.flags & (skill_flags::MAGIC | skill_flags::CAST)
+                            == (skill_flags::MAGIC | skill_flags::CAST)
+                        && skill.flags & skill_flags::DISABLED == 0
+                })
+                .and_then(|skill| skill.abbreviation)
+                .expect("ruleset has an enabled castable skill");
+            let mut invalid_orders = vec![
+                ("cast".to_owned(), "CAST: No skill given."),
+                ("cast not_a_skill".to_owned(), "CAST: Invalid skill."),
+                (
+                    format!("cast {non_magic_skill}"),
+                    "CAST: That is not a magic skill.",
+                ),
+                (
+                    format!("cast {magic_non_cast_skill}"),
+                    "CAST: That skill cannot be CAST.",
+                ),
+            ];
+            if let Some(disabled_skill) = skills
+                .iter()
+                .find(|skill| {
+                    skill.abbreviation.is_some() && skill.flags & skill_flags::DISABLED != 0
+                })
+                .and_then(|skill| skill.abbreviation)
+            {
+                invalid_orders.push((format!("cast {disabled_skill}"), "CAST: Invalid skill."));
+            }
+
+            for (order, expected_error) in invalid_orders {
+                let (mut game, faction_id, _, _) = game_with_unit();
+                let input = format!("#atlantis 7 none\nunit 10\n{order}\n#end\n");
+                parse_order_file_with_tables(
+                    &mut game,
+                    ruleset.game_defs(),
+                    &tables,
+                    input.as_bytes(),
+                    OrderParseMode::Turn,
+                )
+                .unwrap();
+                assert_eq!(
+                    game.faction(faction_id).unwrap().errors,
+                    [format!("Unit (10): {expected_error}")],
+                    "{ruleset_name}: {order}"
+                );
+            }
+
+            let (mut check_game, _, _, check_unit) = game_with_unit();
+            let input = format!("#atlantis 7 none\nunit 10\ncast {castable_skill}\n#end\n");
+            let check = parse_order_file_with_tables(
+                &mut check_game,
+                ruleset.game_defs(),
+                &tables,
+                input.as_bytes(),
+                OrderParseMode::Check,
+            )
+            .unwrap();
+            assert!(check.errors.is_empty(), "{ruleset_name}");
+            assert!(
+                check_game
+                    .unit(check_unit)
+                    .unwrap()
+                    .orders
+                    .cast_orders
+                    .is_none(),
+                "{ruleset_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn cast_generic_and_mind_reading_orders_store_expected_data() {
+        for ruleset_name in ["standard", "neworigins"] {
+            let ruleset = <dyn Ruleset>::from_name(ruleset_name).unwrap();
+            let tables = ruleset.tables();
+            let generic_spell =
+                crate::defs::skills::parse_skill(&tables.skills.skills, "CPOR").unwrap();
+            let (mut generic_game, generic_faction, _, generic_unit) = game_with_unit();
+            let generic = parse_order_file_with_tables(
+                &mut generic_game,
+                ruleset.game_defs(),
+                &tables,
+                b"#atlantis 7 none\nunit 10\ncast CPOR\n#end\n",
+                OrderParseMode::Turn,
+            )
+            .unwrap();
+            assert!(generic.errors.is_empty(), "{ruleset_name}");
+            let Some(CastOrderData::Cast(order)) =
+                &generic_game.unit(generic_unit).unwrap().orders.cast_orders
+            else {
+                panic!("expected generic cast order for {ruleset_name}");
+            };
+            assert_eq!(order.spell, generic_spell as i32);
+            assert_eq!(order.level, 1);
+            assert!(generic_game
+                .unit(generic_unit)
+                .unwrap()
+                .orders
+                .teleport_orders
+                .is_none());
+            assert!(generic_game
+                .faction(generic_faction)
+                .unwrap()
+                .errors
+                .is_empty());
+
+            let mind_spell =
+                crate::defs::skills::parse_skill(&tables.skills.skills, "MIND").unwrap();
+            let (mut mind_game, mind_faction, _, mind_unit) = game_with_unit();
+            let mind = parse_order_file_with_tables(
+                &mut mind_game,
+                ruleset.game_defs(),
+                &tables,
+                b"#atlantis 7 none\nunit 10\ncast MIND 11\n#end\n",
+                OrderParseMode::Turn,
+            )
+            .unwrap();
+            assert!(mind.errors.is_empty(), "{ruleset_name}");
+            let Some(CastOrderData::Mind(order)) =
+                &mind_game.unit(mind_unit).unwrap().orders.cast_orders
+            else {
+                panic!("expected mind-reading cast order for {ruleset_name}");
+            };
+            assert_eq!(order.spell, mind_spell as i32);
+            assert_eq!(order.level, 1);
+            assert_eq!(
+                order.id,
+                Some(OrderUnitId {
+                    unitnum: 11,
+                    alias: 0,
+                    faction: 0,
+                })
+            );
+            assert!(mind_game.faction(mind_faction).unwrap().errors.is_empty());
+        }
+    }
+
+    #[test]
+    fn cast_region_spells_use_caster_coordinates_and_validate_cross_level_targets() {
+        for ruleset_name in ["standard", "neworigins"] {
+            let ruleset = <dyn Ruleset>::from_name(ruleset_name).unwrap();
+            let mut tables = ruleset.tables();
+            let farsight_spell =
+                crate::defs::skills::parse_skill(&tables.skills.skills, "FARS").unwrap();
+            let range = tables.skills.skills[farsight_spell]
+                .range
+                .expect("Farsight has a range");
+            tables.skills.ranges[range].flags |= crate::defs::skills::range_flags::CROSS_LEVELS;
+            let teleport_spell =
+                crate::defs::skills::parse_skill(&tables.skills.skills, "TELE").unwrap();
+
+            let (mut region_game, region_faction, object_id, region_unit) = game_with_unit();
+            let region_id = region_game.object(object_id).unwrap().region.unwrap();
+            let region = region_game.region_mut(region_id).unwrap();
+            region.xloc = 4;
+            region.yloc = 8;
+            region.zloc = 2;
+            let result = parse_order_file_with_tables(
+                &mut region_game,
+                ruleset.game_defs(),
+                &tables,
+                b"#atlantis 7 none\nunit 10\ncast FARS\n#end\n",
+                OrderParseMode::Turn,
+            )
+            .unwrap();
+            assert!(result.errors.is_empty(), "{ruleset_name}");
+            assert_eq!(
+                region_game.unit(region_unit).unwrap().orders.cast_orders,
+                Some(CastOrderData::Region(CastRegionOrder {
+                    spell: farsight_spell as i32,
+                    level: 1,
+                    xloc: 4,
+                    yloc: 8,
+                    zloc: 2,
+                    ..CastRegionOrder::default()
+                }))
+            );
+            assert!(region_game
+                .faction(region_faction)
+                .unwrap()
+                .errors
+                .is_empty());
+
+            let (mut explicit_game, _, explicit_object, explicit_unit) = game_with_unit();
+            let explicit_region = explicit_game
+                .object(explicit_object)
+                .unwrap()
+                .region
+                .unwrap();
+            explicit_game.region_mut(explicit_region).unwrap().zloc = 2;
+            parse_order_file_with_tables(
+                &mut explicit_game,
+                ruleset.game_defs(),
+                &tables,
+                b"#atlantis 7 none\nunit 10\ncast FARS region 12 8 1\n#end\n",
+                OrderParseMode::Turn,
+            )
+            .unwrap();
+            assert_eq!(
+                explicit_game
+                    .unit(explicit_unit)
+                    .unwrap()
+                    .orders
+                    .cast_orders,
+                Some(CastOrderData::Region(CastRegionOrder {
+                    spell: farsight_spell as i32,
+                    level: 1,
+                    xloc: 12,
+                    yloc: 8,
+                    zloc: 1,
+                    ..CastRegionOrder::default()
+                }))
+            );
+            let (mut teleport_game, _, teleport_object, teleport_unit) = game_with_unit();
+            let teleport_region = teleport_game
+                .object(teleport_object)
+                .unwrap()
+                .region
+                .unwrap();
+            {
+                let region = teleport_game.region_mut(teleport_region).unwrap();
+                region.xloc = 3;
+                region.yloc = 6;
+                region.zloc = 1;
+            }
+            parse_order_file_with_tables(
+                &mut teleport_game,
+                ruleset.game_defs(),
+                &tables,
+                b"#atlantis 7 none\nunit 10\ncast TELE\n#end\n",
+                OrderParseMode::Turn,
+            )
+            .unwrap();
+            assert_eq!(
+                teleport_game
+                    .unit(teleport_unit)
+                    .unwrap()
+                    .orders
+                    .teleport_orders,
+                Some(TeleportOrder {
+                    spell: teleport_spell as i32,
+                    level: 1,
+                    xloc: 3,
+                    yloc: 6,
+                    zloc: 1,
+                    ..TeleportOrder::default()
+                })
+            );
+            assert!(teleport_game
+                .unit(teleport_unit)
+                .unwrap()
+                .orders
+                .cast_orders
+                .is_none());
+
+            let invalid_z = ruleset.game_defs().underworld_levels
+                + ruleset.game_defs().underdeep_levels
+                + ruleset.game_defs().abyss_level
+                + 2;
+            let (mut invalid_game, invalid_faction, _, _) = game_with_unit();
+            parse_order_file_with_tables(
+                &mut invalid_game,
+                ruleset.game_defs(),
+                &tables,
+                format!("#atlantis 7 none\nunit 10\ncast FARS region 12 8 {invalid_z}\n#end\n")
+                    .as_bytes(),
+                OrderParseMode::Turn,
+            )
+            .unwrap();
+            assert_eq!(
+                invalid_game.faction(invalid_faction).unwrap().errors,
+                ["Unit (10): CAST: Invalid Z coordinate specified."],
+                "{ruleset_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn cast_gate_portal_and_invisibility_orders_preserve_target_lists() {
+        for ruleset_name in ["standard", "neworigins"] {
+            let ruleset = <dyn Ruleset>::from_name(ruleset_name).unwrap();
+            let tables = ruleset.tables();
+            let invisibility_spell =
+                crate::defs::skills::parse_skill(&tables.skills.skills, "INVI").unwrap();
+            let gate_lore_spell =
+                crate::defs::skills::parse_skill(&tables.skills.skills, "GATE").unwrap();
+            let portal_lore_spell =
+                crate::defs::skills::parse_skill(&tables.skills.skills, "PORT").unwrap();
+
+            let (mut invisibility_game, _, _, invisibility_unit) = game_with_unit();
+            let invisibility = parse_order_file_with_tables(
+                &mut invisibility_game,
+                ruleset.game_defs(),
+                &tables,
+                b"#atlantis 7 none\nunit 10\ncast INVI units 11 12\ncast INVI units 13\n#end\n",
+                OrderParseMode::Turn,
+            )
+            .unwrap();
+            assert!(invisibility.errors.is_empty(), "{ruleset_name}");
+            assert_eq!(
+                invisibility_game
+                    .unit(invisibility_unit)
+                    .unwrap()
+                    .orders
+                    .cast_orders,
+                Some(CastOrderData::Units(CastUnitsOrder {
+                    spell: invisibility_spell as i32,
+                    level: 1,
+                    units: [11, 12, 13]
+                        .map(|unitnum| OrderUnitId {
+                            unitnum,
+                            alias: 0,
+                            faction: 0,
+                        })
+                        .to_vec(),
+                    ..CastUnitsOrder::default()
+                }))
+            );
+
+            let (mut gate_game, _, _, gate_unit) = game_with_unit();
+            parse_order_file_with_tables(
+                &mut gate_game,
+                ruleset.game_defs(),
+                &tables,
+                b"#atlantis 7 none\nunit 10\ncast GATE gate 4 units 11 12\ncast GATE gate 4 units 13\n#end\n",
+                OrderParseMode::Turn,
+            )
+            .unwrap();
+            assert_eq!(
+                gate_game.unit(gate_unit).unwrap().orders.teleport_orders,
+                Some(TeleportOrder {
+                    spell: gate_lore_spell as i32,
+                    level: 3,
+                    gate: 4,
+                    units: [11, 12, 13]
+                        .map(|unitnum| OrderUnitId {
+                            unitnum,
+                            alias: 0,
+                            faction: 0,
+                        })
+                        .to_vec(),
+                    ..TeleportOrder::default()
+                })
+            );
+
+            let (mut random_gate_game, _, _, random_gate_unit) = game_with_unit();
+            parse_order_file_with_tables(
+                &mut random_gate_game,
+                ruleset.game_defs(),
+                &tables,
+                b"#atlantis 7 none\nunit 10\ncast GATE random level units 14\n#end\n",
+                OrderParseMode::Turn,
+            )
+            .unwrap();
+            assert_eq!(
+                random_gate_game
+                    .unit(random_gate_unit)
+                    .unwrap()
+                    .orders
+                    .teleport_orders,
+                Some(TeleportOrder {
+                    spell: gate_lore_spell as i32,
+                    level: 2,
+                    gate: -2,
+                    units: vec![OrderUnitId {
+                        unitnum: 14,
+                        alias: 0,
+                        faction: 0,
+                    }],
+                    ..TeleportOrder::default()
+                })
+            );
+
+            let (mut detect_game, _, _, detect_unit) = game_with_unit();
+            parse_order_file_with_tables(
+                &mut detect_game,
+                ruleset.game_defs(),
+                &tables,
+                b"#atlantis 7 none\nunit 10\ncast GATE detect\n#end\n",
+                OrderParseMode::Turn,
+            )
+            .unwrap();
+            assert_eq!(
+                detect_game.unit(detect_unit).unwrap().orders.cast_orders,
+                Some(CastOrderData::Cast(CastOrder {
+                    spell: gate_lore_spell as i32,
+                    level: 2,
+                    ..CastOrder::default()
+                }))
+            );
+
+            let (mut portal_game, _, _, portal_unit) = game_with_unit();
+            parse_order_file_with_tables(
+                &mut portal_game,
+                ruleset.game_defs(),
+                &tables,
+                b"#atlantis 7 none\nunit 10\ncast PORT 7 units 15\ncast PORT 8 units 16\n#end\n",
+                OrderParseMode::Turn,
+            )
+            .unwrap();
+            assert_eq!(
+                portal_game
+                    .unit(portal_unit)
+                    .unwrap()
+                    .orders
+                    .teleport_orders,
+                Some(TeleportOrder {
+                    spell: portal_lore_spell as i32,
+                    level: 1,
+                    gate: 8,
+                    units: [15, 16]
+                        .map(|unitnum| OrderUnitId {
+                            unitnum,
+                            alias: 0,
+                            faction: 0,
+                        })
+                        .to_vec(),
+                    ..TeleportOrder::default()
+                })
+            );
+
+            for (order, expected_error) in [
+                ("cast INVI", "CAST: Must specify units to render invisible."),
+                ("cast GATE", "CAST: Missing argument."),
+                ("cast GATE gate 0", "CAST: Requires a target gate."),
+                ("cast PORT", "CAST: Requires a target mage."),
+                ("cast PORT 7", "CAST: No units to teleport."),
+                ("cast PORT 7 allies", "CAST: No units to teleport."),
+            ] {
+                let (mut game, faction_id, _, _) = game_with_unit();
+                let input = format!("#atlantis 7 none\nunit 10\n{order}\n#end\n");
+                parse_order_file_with_tables(
+                    &mut game,
+                    ruleset.game_defs(),
+                    &tables,
+                    input.as_bytes(),
+                    OrderParseMode::Turn,
+                )
+                .unwrap();
+                assert_eq!(
+                    game.faction(faction_id).unwrap().errors,
+                    [format!("Unit (10): {expected_error}")],
+                    "{ruleset_name}: {order}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cast_integer_spell_and_transmutation_variants_match_cpp() {
+        for ruleset_name in ["standard", "neworigins"] {
+            let ruleset = <dyn Ruleset>::from_name(ruleset_name).unwrap();
+            let tables = ruleset.tables();
+            let integer_cases = [
+                ("BIRD", "eagle", 3, 0),
+                ("BIRD", "direction northwest", 1, 5),
+                ("PHBE", "wolf 2", 1, 2),
+                ("PHUN", "skeleton 3", 1, 3),
+                ("PHDE", "demon 4", 2, 4),
+                ("PHBE", "dragon", 3, 1),
+            ];
+            for (abbreviation, arguments, level, target) in integer_cases {
+                let Some(spell) =
+                    crate::defs::skills::parse_skill(&tables.skills.skills, abbreviation)
+                else {
+                    assert_eq!(abbreviation, "PHUN", "{ruleset_name}");
+                    continue;
+                };
+                let (mut game, faction_id, _, unit_id) = game_with_unit();
+                let input =
+                    format!("#atlantis 7 none\nunit 10\ncast {abbreviation} {arguments}\n#end\n");
+                let result = parse_order_file_with_tables(
+                    &mut game,
+                    ruleset.game_defs(),
+                    &tables,
+                    input.as_bytes(),
+                    OrderParseMode::Turn,
+                )
+                .unwrap();
+                assert!(result.errors.is_empty(), "{ruleset_name}: {abbreviation}");
+                assert_eq!(
+                    game.unit(unit_id).unwrap().orders.cast_orders,
+                    Some(CastOrderData::Int(CastIntOrder {
+                        spell: spell as i32,
+                        level,
+                        target,
+                        ..CastIntOrder::default()
+                    })),
+                    "{ruleset_name}: {abbreviation}"
+                );
+                assert!(game.faction(faction_id).unwrap().errors.is_empty());
+            }
+
+            let transmutation_spell =
+                crate::defs::skills::parse_skill(&tables.skills.skills, "TRNS");
+            if let Some(spell) = transmutation_spell {
+                for (item_token, item_name, level) in [
+                    ("mithril", "mithril", 1),
+                    ("rootstone", "rootstone", 1),
+                    ("ironwood", "ironwood", 2),
+                    ("FLOA", "floater hide", 3),
+                    ("yew", "yew", 4),
+                    ("WING", "winged horse", 5),
+                    ("admantium", "admantium", 5),
+                ] {
+                    let mut case_tables = tables.clone();
+                    if item_token == "WING" {
+                        case_tables.item_families.items[ItemId::Whorse.index()].flags &=
+                            !crate::defs::ItemFlags::DISABLED;
+                    }
+                    let item = case_tables
+                        .item_families
+                        .parse_enabled_item(item_token)
+                        .unwrap_or_else(|| panic!("{ruleset_name} has enabled item {item_name}"));
+                    let (mut game, _, _, unit_id) = game_with_unit();
+                    let input =
+                        format!("#atlantis 7 none\nunit 10\ncast TRNS 5 {item_token}\n#end\n");
+                    parse_order_file_with_tables(
+                        &mut game,
+                        ruleset.game_defs(),
+                        &case_tables,
+                        input.as_bytes(),
+                        OrderParseMode::Turn,
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        game.unit(unit_id).unwrap().orders.cast_orders,
+                        Some(CastOrderData::Transmute(CastTransmuteOrder {
+                            spell: spell as i32,
+                            level,
+                            item: item as i32,
+                            number: 5,
+                            ..CastTransmuteOrder::default()
+                        })),
+                        "{ruleset_name}: {item_name}"
+                    );
+                }
+            } else {
+                assert_ne!(
+                    tables.skills.skills
+                        [crate::defs::skills::lookup_skill(&tables.skills.skills, "TRNS").unwrap()]
+                    .flags
+                        & skill_flags::DISABLED,
+                    0,
+                    "{ruleset_name}"
+                );
+            }
+
+            let mut error_cases = vec![
+                ("cast BIRD", "CAST: Missing arguments."),
+                ("cast BIRD direction invalid", "CAST: Invalid direction."),
+                ("cast BIRD invalid", "CAST: Invalid arguments."),
+                ("cast PHBE", "CAST: Must specify which illusion to summon."),
+                (
+                    "cast PHBE dragons",
+                    "CAST: Must specify which illusion to summon.",
+                ),
+                ("cast PHDE", "CAST: Illusion to summon must be given."),
+                ("cast PHDE unicorn", "CAST: Can't summon that illusion."),
+            ];
+            error_cases.push((
+                "cast PHUN unknown",
+                if crate::defs::skills::parse_skill(&tables.skills.skills, "PHUN").is_some() {
+                    "CAST: Must specify which illusion to summon."
+                } else {
+                    "CAST: Invalid skill."
+                },
+            ));
+            if transmutation_spell.is_some() {
+                error_cases.extend([
+                    (
+                        "cast TRNS",
+                        "CAST: You must specify what you wish to create.",
+                    ),
+                    (
+                        "cast TRNS iron",
+                        "CAST: Can't create that by transmutation.",
+                    ),
+                ]);
+            } else {
+                error_cases.push(("cast TRNS", "CAST: Invalid skill."));
+            }
+            for (order, expected_error) in error_cases {
+                let (mut game, faction_id, _, _) = game_with_unit();
+                let input = format!("#atlantis 7 none\nunit 10\n{order}\n#end\n");
+                parse_order_file_with_tables(
+                    &mut game,
+                    ruleset.game_defs(),
+                    &tables,
+                    input.as_bytes(),
+                    OrderParseMode::Turn,
+                )
+                .unwrap();
+                assert_eq!(
+                    game.faction(faction_id).unwrap().errors,
+                    [format!("Unit (10): {expected_error}")],
+                    "{ruleset_name}: {order}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cast_every_castable_skill_routes_for_both_rulesets() {
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+        enum ExpectedOrder {
+            Generic,
+            Mind,
+            Region,
+            Teleport,
+            Integer,
+            Units,
+            Transmutation,
+            NoHandler,
+        }
+
+        const GENERIC_SPELLS: &[&str] = &[
+            "construct portal",
+            "enchant swords",
+            "enchant armor",
+            "enchant shields",
+            "construct gate",
+            "engrave runes of warding",
+            "summon imps",
+            "summon demon",
+            "summon balrog",
+            "summon skeletons",
+            "raise undead",
+            "summon lich",
+            "dragon lore",
+            "wolf lore",
+            "earth lore",
+            "summon wind",
+            "create ring of invisibility",
+            "create cloak of invulnerability",
+            "create staff of fire",
+            "create staff of lightning",
+            "create amulet of true seeing",
+            "create amulet of protection",
+            "create runesword",
+            "create shieldstone",
+            "create magic carpet",
+            "create flaming sword",
+            "create food",
+            "create aegis",
+            "create windchime",
+            "create gate crystal",
+            "create staff of healing",
+            "create scrying orb",
+            "create cornucopia",
+            "create book of exorcism",
+            "create holy symbol",
+            "create censer",
+            "blasphemous ritual",
+            "phantasmal entertainment",
+        ];
+
+        for ruleset_name in ["standard", "neworigins"] {
+            let ruleset = <dyn Ruleset>::from_name(ruleset_name).unwrap();
+            let tables = ruleset.tables();
+            let mut castable_count = 0;
+            for (spell, skill) in tables.skills.skills.iter().enumerate() {
+                if skill.flags & (skill_flags::MAGIC | skill_flags::CAST)
+                    != (skill_flags::MAGIC | skill_flags::CAST)
+                {
+                    continue;
+                }
+                castable_count += 1;
+                let token = skill
+                    .abbreviation
+                    .expect("castable skills have an abbreviation");
+                let name = skill.name.unwrap_or("");
+                let (expected, arguments) = if skill.flags & skill_flags::DISABLED != 0 {
+                    let (mut game, faction_id, _, _) = game_with_unit();
+                    let input = format!("#atlantis 7 none\nunit 10\ncast {token}\n#end\n");
+                    parse_order_file_with_tables(
+                        &mut game,
+                        ruleset.game_defs(),
+                        &tables,
+                        input.as_bytes(),
+                        OrderParseMode::Turn,
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        game.faction(faction_id).unwrap().errors,
+                        ["Unit (10): CAST: Invalid skill."],
+                        "{ruleset_name}: {name}"
+                    );
+                    continue;
+                } else if is_equal(name, "mind reading") {
+                    (ExpectedOrder::Mind, "11")
+                } else if is_equal(name, "farsight")
+                    || is_equal(name, "weather lore")
+                    || (is_equal(name, "clear skies")
+                        && skill
+                            .range
+                            .and_then(|range| tables.skills.ranges.get(range))
+                            .is_some())
+                {
+                    (ExpectedOrder::Region, "")
+                } else if is_equal(name, "teleportation") {
+                    (ExpectedOrder::Teleport, "")
+                } else if is_equal(name, "invisibility") {
+                    (ExpectedOrder::Units, "units 10")
+                } else if is_equal(name, "gate lore") {
+                    (ExpectedOrder::Generic, "detect")
+                } else if is_equal(name, "portal lore") {
+                    (ExpectedOrder::Teleport, "1 units 10")
+                } else if is_equal(name, "bird lore") {
+                    (ExpectedOrder::Integer, "eagle")
+                } else if is_equal(name, "create phantasmal beasts") {
+                    (ExpectedOrder::Integer, "wolf")
+                } else if is_equal(name, "create phantasmal undead") {
+                    (ExpectedOrder::Integer, "skeleton")
+                } else if is_equal(name, "create phantasmal demons") {
+                    (ExpectedOrder::Integer, "imp")
+                } else if is_equal(name, "transmutation") {
+                    (ExpectedOrder::Transmutation, "mithril")
+                } else if GENERIC_SPELLS.iter().any(|spell| is_equal(name, spell))
+                    || is_equal(name, "clear skies")
+                {
+                    (ExpectedOrder::Generic, "")
+                } else {
+                    (ExpectedOrder::NoHandler, "")
+                };
+
+                let (mut game, faction_id, _, unit_id) = game_with_unit();
+                let input = format!("#atlantis 7 none\nunit 10\ncast {token} {arguments}\n#end\n");
+                parse_order_file_with_tables(
+                    &mut game,
+                    ruleset.game_defs(),
+                    &tables,
+                    input.as_bytes(),
+                    OrderParseMode::Turn,
+                )
+                .unwrap();
+                assert!(
+                    game.faction(faction_id).unwrap().errors.is_empty(),
+                    "{ruleset_name}: {name}"
+                );
+                let unit = game.unit(unit_id).unwrap();
+                match expected {
+                    ExpectedOrder::Generic => assert!(matches!(
+                        unit.orders.cast_orders.as_ref(),
+                        Some(CastOrderData::Cast(_))
+                    )),
+                    ExpectedOrder::Mind => assert!(matches!(
+                        unit.orders.cast_orders.as_ref(),
+                        Some(CastOrderData::Mind(_))
+                    )),
+                    ExpectedOrder::Region => assert!(matches!(
+                        unit.orders.cast_orders.as_ref(),
+                        Some(CastOrderData::Region(_))
+                    )),
+                    ExpectedOrder::Teleport => {
+                        assert!(unit.orders.teleport_orders.as_ref().is_some())
+                    }
+                    ExpectedOrder::Integer => assert!(matches!(
+                        unit.orders.cast_orders.as_ref(),
+                        Some(CastOrderData::Int(_))
+                    )),
+                    ExpectedOrder::Units => assert!(matches!(
+                        unit.orders.cast_orders.as_ref(),
+                        Some(CastOrderData::Units(_))
+                    )),
+                    ExpectedOrder::Transmutation => assert!(matches!(
+                        unit.orders.cast_orders.as_ref(),
+                        Some(CastOrderData::Transmute(_))
+                    )),
+                    ExpectedOrder::NoHandler => {
+                        assert!(unit.orders.cast_orders.as_ref().is_none());
+                        assert!(unit.orders.teleport_orders.as_ref().is_none());
+                    }
+                }
+                if expected != ExpectedOrder::Teleport {
+                    assert!(
+                        unit.orders.teleport_orders.as_ref().is_none(),
+                        "{ruleset_name}: {name}"
+                    );
+                } else if !matches!(name, "gate lore") {
+                    assert!(
+                        unit.orders.cast_orders.as_ref().is_none(),
+                        "{ruleset_name}: {name}"
+                    );
+                }
+                assert_eq!(
+                    unit.orders
+                        .cast_orders
+                        .as_ref()
+                        .map(|order| match order {
+                            CastOrderData::Cast(order) => order.spell,
+                            CastOrderData::Mind(order) => order.spell,
+                            CastOrderData::Region(order) => order.spell,
+                            CastOrderData::Int(order) => order.spell,
+                            CastOrderData::Units(order) => order.spell,
+                            CastOrderData::Transmute(order) => order.spell,
+                        })
+                        .or_else(|| {
+                            unit.orders
+                                .teleport_orders
+                                .as_ref()
+                                .map(|order| order.spell)
+                        }),
+                    if expected == ExpectedOrder::NoHandler {
+                        None
+                    } else {
+                        Some(spell as i32)
+                    },
+                    "{ruleset_name}: {name}"
+                );
+            }
+            assert!(castable_count > 0, "{ruleset_name}");
+        }
+    }
 
     #[test]
     fn study_parses_skill_and_optional_level_and_replaces_month_order() {
@@ -2360,9 +3801,11 @@ mod tests {
             .orders
             .month_orders = Some(saved_month_order.clone());
         restore_game.unit_mut(restore_unit).unwrap().taxing = 5;
+        let tables = ruleset.tables();
         let mut parser = super::Parser::new(
             &mut restore_game,
             ruleset.game_defs(),
+            &tables,
             OrderParseMode::Check,
         );
         parser.faction_id = Some(restore_faction);
@@ -2587,8 +4030,13 @@ mod tests {
         );
 
         let (mut check_game, check_faction, _, check_unit) = game_with_unit();
-        let mut parser =
-            super::Parser::new(&mut check_game, ruleset.game_defs(), OrderParseMode::Check);
+        let tables = ruleset.tables();
+        let mut parser = super::Parser::new(
+            &mut check_game,
+            ruleset.game_defs(),
+            &tables,
+            OrderParseMode::Check,
+        );
         parser.faction_id = Some(check_faction);
         parser.unit_stack.push(check_unit);
         let mut cursor = 0;
@@ -2605,6 +4053,7 @@ mod tests {
     #[test]
     fn movement_orders_append_and_overwrite_with_original_errors() {
         let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let tables = ruleset.tables();
 
         let (mut move_game, move_faction, _, move_unit) = game_with_unit();
         parse_order_file(
@@ -2694,8 +4143,12 @@ mod tests {
             .unwrap()
             .orders
             .in_turn_block = 1;
-        let mut parser =
-            super::Parser::new(&mut delayed_game, ruleset.game_defs(), OrderParseMode::Turn);
+        let mut parser = super::Parser::new(
+            &mut delayed_game,
+            ruleset.game_defs(),
+            &tables,
+            OrderParseMode::Turn,
+        );
         parser.faction_id = Some(delayed_faction);
         parser.unit_stack.push(delayed_unit);
         let mut cursor = 0;
@@ -2711,7 +4164,7 @@ mod tests {
         let mut defs = *ruleset.game_defs();
         defs.tax_pillage_month_long = 1;
         let (mut taxed_game, taxed_faction, _, taxed_unit) = game_with_unit();
-        let mut parser = super::Parser::new(&mut taxed_game, &defs, OrderParseMode::Turn);
+        let mut parser = super::Parser::new(&mut taxed_game, &defs, &tables, OrderParseMode::Turn);
         parser.faction_id = Some(taxed_faction);
         parser.unit_stack.push(taxed_unit);
         parser.game.unit_mut(taxed_unit).unwrap().taxing = 1;
