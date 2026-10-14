@@ -100,7 +100,7 @@ impl RegionArray {
 
 fn wrap_coordinate(coordinate: i32, size: i32) -> Option<i32> {
     let wrapped = (i64::from(coordinate) + i64::from(size)) % i64::from(size);
-    i32::try_from(wrapped).ok().filter(|value| *value >= 0)
+    i32::try_from(wrapped).ok()
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -162,6 +162,7 @@ pub struct Game {
     pub do_extra_init: i32,
     pub events: Vec<String>,
     unit_numbers: Vec<Option<UnitId>>,
+    next_free_unit_number: u32,
 }
 
 impl Default for Game {
@@ -187,6 +188,7 @@ impl Default for Game {
             do_extra_init: 0,
             events: Vec::new(),
             unit_numbers: Vec::new(),
+            next_free_unit_number: 1,
         }
     }
 }
@@ -403,6 +405,7 @@ impl Game {
                 });
             }
         }
+        self.next_free_unit_number = self.first_free_unit_number(1);
         Ok(issues)
     }
 
@@ -413,13 +416,9 @@ impl Game {
         alias: i32,
         default_move_points: i32,
     ) -> Result<UnitId, ModelError> {
-        let reusable = (1..self.unit_seq).find(|number| {
-            self.unit_numbers
-                .get(*number as usize)
-                .is_none_or(|id| id.is_none())
-        });
-        let number = reusable.unwrap_or(self.unit_seq);
-        let next_seq = if reusable.is_some() {
+        let number = self.first_free_unit_number(self.next_free_unit_number.min(self.unit_seq));
+        let reuses_number = number < self.unit_seq;
+        let next_seq = if reuses_number {
             self.unit_seq
         } else {
             number
@@ -437,6 +436,11 @@ impl Game {
         )));
         self.unit_numbers[number as usize] = Some(id);
         self.unit_seq = next_seq;
+        self.next_free_unit_number = if reuses_number {
+            self.first_free_unit_number(number + 1)
+        } else {
+            next_seq
+        };
         Ok(id)
     }
 
@@ -475,6 +479,16 @@ impl Game {
             );
         }
         Ok(())
+    }
+
+    fn first_free_unit_number(&self, start: u32) -> u32 {
+        (start..self.unit_seq)
+            .find(|number| {
+                self.unit_numbers
+                    .get(*number as usize)
+                    .is_none_or(|id| id.is_none())
+            })
+            .unwrap_or(self.unit_seq)
     }
 
     fn ordered_unit_ids(&self) -> Vec<UnitId> {

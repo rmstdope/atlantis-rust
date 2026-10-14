@@ -141,6 +141,17 @@ fn region_lookup_wraps_coordinates_and_preserves_number_lookup() {
 }
 
 #[test]
+fn region_lookup_preserves_cpp_single_add_wrapping_for_far_negative_coordinates() {
+    let mut game = Game::default();
+    let region = game.add_region(Region::default());
+    let mut surface = RegionArray::new(4, 4, RegionLevelType::Surface).unwrap();
+    surface.set_region(1, 1, region).unwrap();
+    game.add_region_array(surface);
+
+    assert_eq!(game.get_region_at(-5, 1, 0), Some(region));
+}
+
+#[test]
 fn region_keeps_dummy_object_and_hell_units() {
     let mut game = Game::default();
     let region = game.add_region(Region::default());
@@ -261,6 +272,8 @@ fn unit_number_setup_reassigns_duplicates_and_get_new_unit_reuses_the_lowest_fre
 
     let new_unit = game.get_new_unit(None, 0, 3).unwrap();
     let next_unit = game.get_new_unit(None, 0, 3).unwrap();
+    let last_gap = game.get_new_unit(None, 0, 3).unwrap();
+    let appended_unit = game.get_new_unit(None, 0, 3).unwrap();
     assert_eq!(game.unit(new_unit).unwrap().num, 1);
     assert_eq!(
         game.unit(new_unit).unwrap().name.as_deref(),
@@ -268,6 +281,8 @@ fn unit_number_setup_reassigns_duplicates_and_get_new_unit_reuses_the_lowest_fre
     );
     assert_eq!(game.unit(new_unit).unwrap().movepoints, 3);
     assert_eq!(game.unit(next_unit).unwrap().num, 3);
+    assert_eq!(game.unit(last_gap).unwrap().num, 4);
+    assert_eq!(game.unit(appended_unit).unwrap().num, 8);
     game.attach_unit(object, new_unit).unwrap();
     assert_eq!(
         game.object(object).unwrap().unit_ids().last(),
