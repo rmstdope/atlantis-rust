@@ -5,6 +5,18 @@ use crate::defs::{self, ItemId, TerrainId};
 use super::{FactionId, ObjectId, RegionId, UnitId};
 use super::{ItemList, SkillList};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FactionItemShow {
+    pub item_type: ItemId,
+    pub full: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct FactionSkillShow {
+    pub skill_type: usize,
+    pub level: i32,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Faction {
     pub num: i32,
@@ -32,14 +44,14 @@ pub struct Faction {
     pub present_regions: Vec<RegionId>,
     pub default_attitude: i32,
     pub attitudes: Vec<Attitude>,
-    pub skills: Vec<usize>,
-    pub items: Vec<ItemId>,
+    pub skills: SkillList,
+    pub items: ItemList,
     pub extra_players: Vec<String>,
     pub errors: Vec<String>,
     pub events: Vec<String>,
     pub battles: Vec<String>,
-    pub shows: Vec<String>,
-    pub item_shows: Vec<String>,
+    pub shows: Vec<FactionSkillShow>,
+    pub item_shows: Vec<FactionItemShow>,
     pub object_shows: Vec<String>,
     pub region: Option<RegionId>,
     pub start_location: Option<RegionId>,
@@ -75,8 +87,8 @@ impl Default for Faction {
             present_regions: Vec::new(),
             default_attitude: 2,
             attitudes: Vec::new(),
-            skills: Vec::new(),
-            items: Vec::new(),
+            skills: SkillList::default(),
+            items: ItemList::default(),
             extra_players: Vec::new(),
             errors: Vec::new(),
             events: Vec::new(),

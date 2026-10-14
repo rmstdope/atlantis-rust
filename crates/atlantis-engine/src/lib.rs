@@ -3,6 +3,7 @@
 pub mod defs;
 pub mod model;
 pub mod output;
+pub mod players;
 pub mod rng;
 pub mod ruleset;
 pub mod text;
