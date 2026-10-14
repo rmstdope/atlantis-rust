@@ -417,7 +417,7 @@ fn give_item(
             format!("Is given {description} by the gods."),
         );
     }
-    discover_item(game, faction_id, item_type, item_index, tables);
+    discover_item(game, faction_id, item_type, item_index, false, true, tables);
     Ok(())
 }
 
@@ -548,21 +548,35 @@ pub(crate) fn discover_item(
     faction_id: FactionId,
     item_type: ItemId,
     item_index: usize,
+    force: bool,
+    full: bool,
     tables: &RulesetTables,
 ) {
     let faction = game
         .faction_mut(faction_id)
         .expect("selected faction exists");
     let seen = faction.items.get_num(item_type);
-    if seen > 1 {
+    let mut force = force;
+    let mut full = full;
+    if seen == 0 {
+        faction.items.set_num(item_type, if full { 2 } else { 1 });
+        force = true;
+    } else if seen == 1 {
+        if full {
+            faction.items.set_num(item_type, 2);
+        }
+        force = true;
+    } else {
+        full = true;
+    }
+    if !force {
         return;
     }
-    faction.items.set_num(item_type, 2);
     if tables.item_families.items[item_index].flags & ItemFlags::DISABLED == 0 {
-        faction.item_shows.push(FactionItemShow {
-            item_type,
-            full: true,
-        });
+        faction.item_shows.push(FactionItemShow { item_type, full });
+    }
+    if !full {
+        return;
     }
 
     let Some(grant_skill) = tables.item_families.items[item_index]

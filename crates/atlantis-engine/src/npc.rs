@@ -708,7 +708,7 @@ fn is_starting_city(region: &crate::model::Region, ruleset: &'static dyn Ruleset
 }
 
 /// C++: `economy.cpp` `TownInfo::TownType`.
-fn town_type(region: &crate::model::Region, city_population: i32) -> i32 {
+pub(crate) fn town_type(region: &crate::model::Region, city_population: i32) -> i32 {
     let town = region.town.as_ref().expect("town type requires a town");
     let prestige = town
         .population

@@ -218,18 +218,27 @@ fn replay_fixtures_contain_all_recorded_turns() {
 
     for ruleset in ["standard", "neworigins"] {
         let ruleset_dir = fixtures.join(ruleset);
-        let mut turn_count = 0;
+        let mut root_turn_count = 0;
         for entry in fs::read_dir(&ruleset_dir).expect("read ruleset fixture directory") {
             let entry = entry.expect("read fixture directory entry");
             let file_type = entry.file_type().expect("read fixture entry type");
             if file_type.is_dir() && entry.file_name().to_string_lossy().starts_with("turn_") {
-                turn_count += 1;
+                root_turn_count += 1;
             }
         }
-        assert_eq!(turn_count, 14, "wrong turn count for {ruleset}");
+        assert_eq!(root_turn_count, 14, "wrong root turn count for {ruleset}");
+        assert_eq!(
+            recorded_turn_dirs(&ruleset_dir.join("instant-orders")).len(),
+            2,
+            "wrong instant-orders turn count for {ruleset}"
+        );
 
         for turn in 0..14 {
             let turn_dir = ruleset_dir.join(format!("turn_{turn}"));
+            assert!(turn_dir.is_dir(), "missing {}", turn_dir.display());
+        }
+
+        for turn_dir in recorded_turn_dirs(&ruleset_dir) {
             for filename in [
                 "game.in",
                 "players.in",
@@ -247,7 +256,6 @@ fn replay_fixtures_contain_all_recorded_turns() {
                     turn_dir.display()
                 );
             }
-
             if ruleset == "neworigins" {
                 let has_times = fs::read_dir(&turn_dir)
                     .expect("read neworigins fixture directory")
@@ -261,6 +269,30 @@ fn replay_fixtures_contain_all_recorded_turns() {
             }
         }
     }
+}
+
+fn recorded_turn_dirs(ruleset_dir: &Path) -> Vec<PathBuf> {
+    let mut turns = Vec::new();
+    for entry in fs::read_dir(ruleset_dir).expect("read ruleset fixture directory") {
+        let entry = entry.expect("read fixture directory entry");
+        if !entry.file_type().expect("read fixture entry type").is_dir() {
+            continue;
+        }
+        if entry.file_name().to_string_lossy().starts_with("turn_") {
+            turns.push(entry.path());
+            continue;
+        }
+        for child in fs::read_dir(entry.path()).expect("read feature-area fixture directory") {
+            let child = child.expect("read feature-area fixture entry");
+            if child.file_type().expect("read fixture entry type").is_dir()
+                && child.file_name().to_string_lossy().starts_with("turn_")
+            {
+                turns.push(child.path());
+            }
+        }
+    }
+    turns.sort();
+    turns
 }
 
 #[test]
@@ -278,8 +310,8 @@ fn replay_fixtures_match_sha256_manifest() {
         let filename_text = filename.to_string_lossy();
         assert_eq!(digest.len(), 64, "invalid SHA-256 digest for {filename:?}");
         assert!(
-            filename_text.starts_with("fixtures/standard/turn_")
-                || filename_text.starts_with("fixtures/neworigins/turn_")
+            filename_text.starts_with("fixtures/standard/")
+                || filename_text.starts_with("fixtures/neworigins/")
                 || filename_text.starts_with("fixtures/new-game/")
                 || filename_text.starts_with("fixtures/economy/region-setup/")
                 || filename_text == "fixtures/world-generation/classic-terrain-counts.json"
@@ -298,19 +330,15 @@ fn replay_fixtures_match_sha256_manifest() {
     let mut actual = BTreeSet::new();
     for ruleset in ["standard", "neworigins"] {
         let ruleset_dir = fixtures.join(ruleset);
-        for turn in fs::read_dir(&ruleset_dir).expect("read ruleset fixture directory") {
-            let turn = turn.expect("read fixture directory entry");
-            if !turn.file_type().expect("read fixture entry type").is_dir()
-                || !turn.file_name().to_string_lossy().starts_with("turn_")
-            {
-                continue;
-            }
-
-            for file in fs::read_dir(turn.path()).expect("read turn fixture directory") {
+        for turn_dir in recorded_turn_dirs(&ruleset_dir) {
+            for file in fs::read_dir(&turn_dir).expect("read turn fixture directory") {
                 let file = file.expect("read turn fixture file");
                 let relative = PathBuf::from("fixtures")
-                    .join(ruleset)
-                    .join(turn.file_name())
+                    .join(
+                        turn_dir
+                            .strip_prefix(&fixtures)
+                            .expect("turn is under fixtures"),
+                    )
                     .join(file.file_name());
                 actual.insert(relative);
             }
