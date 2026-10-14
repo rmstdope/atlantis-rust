@@ -1,11 +1,24 @@
 mod neworigins;
 mod standard;
 
-use crate::defs::{
-    modify::TableModifier,
-    skills::{attribute_item_flags, attribute_modifier_types, range_flags},
-    GameDefs, ItemId, RulesetTables,
+use crate::{
+    defs::{
+        modify::TableModifier,
+        skills::{attribute_item_flags, attribute_modifier_types, range_flags},
+        terrains::{
+            TerrainId, R_DESERT, R_FOREST, R_JUNGLE, R_MOUNTAIN, R_OCEAN, R_PLAIN, R_SWAMP,
+            R_TUNDRA,
+        },
+        GameDefs, ItemId, RulesetTables,
+    },
+    rng::Rng,
 };
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorldNameStyle {
+    Standard,
+    NewOrigins,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FactionLimits {
@@ -57,12 +70,104 @@ pub trait Ruleset: Sync {
         None
     }
 
+    /// C++: `standard/world.cpp` and `neworigins/world.cpp` `GetRegType`.
+    fn surface_terrain_from_roll(&self, latitude: i32, roll: i32) -> TerrainId {
+        match latitude {
+            0 if roll < 24 => R_TUNDRA,
+            0 if roll < 32 => R_MOUNTAIN,
+            0 if roll < 40 => R_FOREST,
+            0 => R_PLAIN,
+            1 if roll < 16 => R_PLAIN,
+            1 if roll < 40 => R_FOREST,
+            1 if roll < 48 => R_MOUNTAIN,
+            1 => R_SWAMP,
+            2 if roll < 20 => R_PLAIN,
+            2 if roll < 28 => R_FOREST,
+            2 if roll < 36 => R_MOUNTAIN,
+            2 if roll < 44 => R_SWAMP,
+            2 if roll < 52 => R_JUNGLE,
+            2 => R_DESERT,
+            3 if roll < 16 => R_PLAIN,
+            3 if roll < 24 => R_MOUNTAIN,
+            3 if roll < 36 => R_SWAMP,
+            3 if roll < 48 => R_JUNGLE,
+            3 => R_DESERT,
+            _ => R_OCEAN,
+        }
+    }
+
+    /// C++: `ARegionList::GetRegType`; the surface consumes one `getrandom(64)` draw.
+    fn get_reg_type(&self, latitude: i32, rng: &mut Rng) -> TerrainId {
+        self.surface_terrain_from_roll(latitude, rng.get_random(64))
+    }
+
+    fn world_name_style(&self) -> WorldNameStyle {
+        WorldNameStyle::Standard
+    }
+
+    fn unnamed_region_name(&self) -> &'static str {
+        "Unnamed"
+    }
+
+    /// C++: `ARegionList::GetLevelXScale`.
+    fn level_x_scale(&self, level: i32) -> i32 {
+        level_x_scale(self.game_defs(), level)
+    }
+
+    /// C++: `ARegionList::GetLevelYScale`.
+    fn level_y_scale(&self, level: i32) -> i32 {
+        level_y_scale(self.game_defs(), level)
+    }
+
     fn name(&self) -> &'static str {
         self.game_defs().ruleset_name
     }
 }
 
-impl dyn Ruleset {
+fn level_x_scale(defs: &GameDefs, level: i32) -> i32 {
+    if level < 2 {
+        return 1;
+    }
+    if defs.underworld_levels == 1 && defs.underdeep_levels == 0 {
+        return 2;
+    }
+    if level >= 2 && level < defs.underworld_levels + 2 {
+        return if level == 2 { 1 } else { 2 };
+    }
+    if level >= defs.underworld_levels + 2
+        && level < defs.underworld_levels + defs.underdeep_levels + 2
+    {
+        return if level == defs.underworld_levels + 2 {
+            2
+        } else {
+            4
+        };
+    }
+    1
+}
+
+fn level_y_scale(defs: &GameDefs, level: i32) -> i32 {
+    if level < 2 {
+        return 1;
+    }
+    if defs.underworld_levels == 1 && defs.underdeep_levels == 0 {
+        return 2;
+    }
+    if level >= 2 && level < defs.underworld_levels + 2 {
+        if level == defs.underworld_levels + 1 {
+            return 4;
+        }
+        return 2;
+    }
+    if level >= defs.underworld_levels + 2
+        && level < defs.underworld_levels + defs.underdeep_levels + 2
+    {
+        return 4;
+    }
+    1
+}
+
+impl dyn Ruleset + '_ {
     pub fn tables(&self) -> RulesetTables {
         let mut tables = RulesetTables::default();
         {

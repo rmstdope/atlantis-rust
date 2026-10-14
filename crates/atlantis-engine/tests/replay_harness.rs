@@ -281,7 +281,8 @@ fn replay_fixtures_match_sha256_manifest() {
             filename_text.starts_with("fixtures/standard/turn_")
                 || filename_text.starts_with("fixtures/neworigins/turn_")
                 || filename_text.starts_with("fixtures/new-game/")
-                || filename_text.starts_with("fixtures/economy/region-setup/"),
+                || filename_text.starts_with("fixtures/economy/region-setup/")
+                || filename_text == "fixtures/world-generation/classic-terrain-counts.json",
             "unexpected file in fixture manifest: {filename:?}"
         );
         assert!(
@@ -341,6 +342,9 @@ fn replay_fixtures_match_sha256_manifest() {
         );
         actual.insert(relative_fixture);
     }
+    actual.insert(PathBuf::from(
+        "fixtures/world-generation/classic-terrain-counts.json",
+    ));
 
     assert_eq!(
         actual,

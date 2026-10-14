@@ -1,0 +1,52 @@
+--- a/standard/map.cpp
++++ b/standard/map.cpp
+@@ -26,4 +26,6 @@
+ #include <stdio.h>
++#include <cstdio>
++#include <cstdlib>
+ #include <string.h>
+ #include "game.h"
+ #include "gamedata.h"
+@@ -1037,0 +1040,15 @@
++	if (pArr->levelType == ARegionArray::LEVEL_SURFACE &&
++			std::getenv("ATLANTIS_WORLD_STATS")) {
++		int counts[R_NUM] = {};
++		for (int sx = 0; sx < pArr->x; ++sx) {
++			for (int sy = 0; sy < pArr->y; ++sy) {
++				ARegion *region = pArr->GetRegion(sx, sy);
++				if (region && region->type >= 0 && region->type < R_NUM)
++					++counts[region->type];
++			}
++		}
++		std::fprintf(stderr, "WORLDGEN_TERRAIN_COUNTS");
++		for (int terrain = 0; terrain < R_NUM; ++terrain)
++			std::fprintf(stderr, " %d", counts[terrain]);
++		std::fprintf(stderr, "\n");
++	}
+ }
+--- a/neworigins/map.cpp
++++ b/neworigins/map.cpp
+@@ -26,4 +26,6 @@
+ #include <stdio.h>
++#include <cstdio>
++#include <cstdlib>
+ #include <string.h>
+ #include "game.h"
+ #include "gamedata.h"
+@@ -2716,0 +2719,15 @@
++	if (pArr->levelType == ARegionArray::LEVEL_SURFACE &&
++			std::getenv("ATLANTIS_WORLD_STATS")) {
++		int counts[R_NUM] = {};
++		for (int sx = 0; sx < pArr->x; ++sx) {
++			for (int sy = 0; sy < pArr->y; ++sy) {
++				ARegion *region = pArr->GetRegion(sx, sy);
++				if (region && region->type >= 0 && region->type < R_NUM)
++					++counts[region->type];
++			}
++		}
++		std::fprintf(stderr, "WORLDGEN_TERRAIN_COUNTS");
++		for (int terrain = 0; terrain < R_NUM; ++terrain)
++			std::fprintf(stderr, " %d", counts[terrain]);
++		std::fprintf(stderr, "\n");
++	}
+ }
