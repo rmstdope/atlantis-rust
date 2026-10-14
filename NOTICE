@@ -1,0 +1,37 @@
+Atlantis Rust
+Copyright (C) 2026 Henrik Kurelid and the Atlantis Rust contributors
+
+This program is a Rust translation of the Atlantis PBEM game engine
+(https://github.com/Atlantis-PBEM/Atlantis). It ports that program's code,
+game data tables and report text, and is therefore distributed under the
+same terms: the GNU General Public License, version 2 or (at your option)
+any later version. See the file LICENSE.
+
+This program is free software; you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation; either version 2 of the License, or (at your option)
+any later version.
+
+This program is distributed in the hope that it will be useful, but
+WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+more details.
+
+Original work
+-------------
+Atlantis was created by Russell Wallace and Geoff Dunbar.
+Copyright (C) 1993 Russell Wallace
+Copyright (C) 1995-1999 Geoff Dunbar
+Copyright (C) 2020-2022 Valdis Zobēla
+and the many contributors listed in the original project's CREDITS file.
+
+Third-party notices
+-------------------
+The original's simplex noise implementation (simplex.cpp, simplex.h) is
+Copyright (c) 2014-2018 Sebastien Rombauts and Copyright (c) 2021 Valdis
+Zobēla, distributed under the MIT License. Any Rust port of it keeps that
+notice alongside the ported code.
+
+Rust crate dependencies are used under their own licences (MIT, MIT or
+Apache-2.0, Unlicense or MIT, Unicode-3.0); where a crate is dual-licensed
+MIT/Apache-2.0 it is used under the MIT License.

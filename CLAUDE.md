@@ -26,6 +26,7 @@ Decisions already taken with the navigator — do not re-open them without askin
 | `genrules` | Part of the replica, byte-identical HTML |
 | World generation | Structural + statistical fidelity (the original is time-seeded); byte-exact is a stretch goal |
 | Fixtures | Extended per feature area by recording turns with the C++ reference |
+| Licence | GPL-2.0-or-later, the original's terms: the replica is a translation of GPL code. Dependencies must be GPL-2.0-compatible (MIT, or MIT for dual MIT/Apache-2.0); see `NOTICE` |
 
 Any **deviation** from the original's behaviour, file formats or command line goes to the
 navigator first. Fixing an original bug is a deviation.

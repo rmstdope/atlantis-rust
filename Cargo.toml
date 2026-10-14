@@ -4,3 +4,6 @@ members = [
     "crates/atlantis-cli",
 ]
 resolver = "2"
+
+[workspace.package]
+license = "GPL-2.0-or-later"
