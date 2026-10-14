@@ -280,7 +280,8 @@ fn replay_fixtures_match_sha256_manifest() {
         assert!(
             filename_text.starts_with("fixtures/standard/turn_")
                 || filename_text.starts_with("fixtures/neworigins/turn_")
-                || filename_text.starts_with("fixtures/new-game/"),
+                || filename_text.starts_with("fixtures/new-game/")
+                || filename_text.starts_with("fixtures/economy/region-setup/"),
             "unexpected file in fixture manifest: {filename:?}"
         );
         assert!(
@@ -323,6 +324,22 @@ fn replay_fixtures_match_sha256_manifest() {
             file.file_name()
         );
         actual.insert(PathBuf::from("fixtures/new-game").join(file.file_name()));
+    }
+
+    for ruleset in ["standard", "neworigins"] {
+        let relative_fixture =
+            PathBuf::from("fixtures/economy/region-setup").join(format!("{ruleset}.jsonl"));
+        let fixture_path = fixtures.join(
+            relative_fixture
+                .strip_prefix("fixtures")
+                .expect("setup fixture path starts with fixtures"),
+        );
+        assert!(
+            fixture_path.is_file(),
+            "missing reference setup fixture: {}",
+            fixture_path.display()
+        );
+        actual.insert(relative_fixture);
     }
 
     assert_eq!(
