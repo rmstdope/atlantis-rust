@@ -2,6 +2,7 @@
 
 pub mod defs;
 pub mod model;
+pub mod orders;
 pub mod output;
 pub mod players;
 pub mod rng;
