@@ -921,7 +921,7 @@ fn final_setup(
     Ok(())
 }
 
-fn region_is_coastal(
+pub(super) fn region_is_coastal(
     game: &Game,
     region_id: RegionId,
     terrain_defs: &[TerrainDef],
@@ -948,7 +948,7 @@ fn region_is_coastal(
     })
 }
 
-fn region_has_ocean_neighbor(
+pub(super) fn region_has_ocean_neighbor(
     game: &Game,
     region_id: RegionId,
     terrain_defs: &[TerrainDef],
@@ -969,7 +969,7 @@ fn region_has_ocean_neighbor(
 }
 
 /// C++: `standard/map.cpp` `GrowRaces`; this runs only when the ruleset enables race growth.
-fn grow_races(
+pub(super) fn grow_races(
     game: &mut Game,
     array: &RegionArray,
     defs: &crate::defs::GameDefs,

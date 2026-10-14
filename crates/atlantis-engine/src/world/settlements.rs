@@ -437,7 +437,7 @@ fn town_development(region: &Region, terrain: &TerrainDef, defs: &GameDefs) -> i
     (region.development - base_development).clamp(0, 100)
 }
 
-fn town_type_value(town: &TownInfo, city_population: i32) -> i32 {
+pub(super) fn town_type_value(town: &TownInfo, city_population: i32) -> i32 {
     let prestige = town.population * (town.development + 220) / 270;
     if prestige < city_population / 4 {
         TownType::Village as i32
