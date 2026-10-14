@@ -6,6 +6,7 @@ pub mod output;
 pub mod players;
 pub mod rng;
 pub mod ruleset;
+pub mod save;
 pub mod text;
 pub mod version;
 

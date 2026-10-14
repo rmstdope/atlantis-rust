@@ -1,4 +1,4 @@
-use super::entities::{Faction, Object, Region, Unit};
+use super::entities::{Faction, Object, Quest, Region, Unit};
 use super::{FactionId, ObjectId, RegionId, UnitId};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,7 +30,7 @@ impl std::fmt::Display for RegionArrayError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let message = match self {
             Self::InvalidDimensions => {
-                "region array dimensions must be positive and have even width"
+                "region array dimensions must be positive and have even width, except for the 1x1 nexus"
             }
             Self::OutOfBounds => "region coordinate is outside the array",
             Self::CoordinateHasNoRegion => "region coordinate is not a hex-grid cell",
@@ -43,13 +43,17 @@ impl std::error::Error for RegionArrayError {}
 
 impl RegionArray {
     pub fn new(x: i32, y: i32, level_type: RegionLevelType) -> Result<Self, RegionArrayError> {
-        if x <= 0 || y <= 0 || x % 2 != 0 {
+        let single_cell_nexus = x == 1 && y == 1 && level_type == RegionLevelType::Nexus;
+        if x <= 0 || y <= 0 || (!single_cell_nexus && x % 2 != 0) {
             return Err(RegionArrayError::InvalidDimensions);
         }
-        let cells = x
-            .checked_mul(y)
-            .and_then(|area| usize::try_from(area / 2).ok())
-            .ok_or(RegionArrayError::InvalidDimensions)?;
+        let cells = if single_cell_nexus {
+            1
+        } else {
+            x.checked_mul(y)
+                .and_then(|area| usize::try_from(area / 2).ok())
+                .ok_or(RegionArrayError::InvalidDimensions)?
+        };
 
         Ok(Self {
             x,
@@ -152,6 +156,7 @@ pub struct Game {
     pub faction_seq: i32,
     pub unit_seq: u32,
     pub ship_seq: i32,
+    pub number_of_gates: i32,
     pub year: i32,
     pub month: i32,
     pub guard_faction: Option<FactionId>,
@@ -161,6 +166,7 @@ pub struct Game {
     pub game_status: i32,
     pub do_extra_init: i32,
     pub events: Vec<String>,
+    pub quests: Vec<Quest>,
     unit_numbers: Vec<Option<UnitId>>,
     next_free_unit_number: u32,
 }
@@ -178,6 +184,7 @@ impl Default for Game {
             faction_seq: 1,
             unit_seq: 1,
             ship_seq: 100,
+            number_of_gates: 0,
             year: 1,
             month: -1,
             guard_faction: None,
@@ -187,6 +194,7 @@ impl Default for Game {
             game_status: 0,
             do_extra_init: 0,
             events: Vec::new(),
+            quests: Vec::new(),
             unit_numbers: Vec::new(),
             next_free_unit_number: 1,
         }

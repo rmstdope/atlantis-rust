@@ -146,6 +146,35 @@ pub struct Attitude {
     pub attitude: i32,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Quest {
+    pub quest_type: i32,
+    pub target: i32,
+    pub objective_type: i32,
+    pub objective_num: i32,
+    pub building: i32,
+    pub region_num: i32,
+    pub region_name: String,
+    pub destinations: BTreeSet<String>,
+    pub rewards: ItemList,
+}
+
+impl Default for Quest {
+    fn default() -> Self {
+        Self {
+            quest_type: -1,
+            target: -1,
+            objective_type: -1,
+            objective_num: 0,
+            building: -1,
+            region_num: -1,
+            region_name: "-".to_owned(),
+            destinations: BTreeSet::new(),
+            rewards: ItemList::default(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TownInfo {
     pub name: Option<String>,
@@ -207,7 +236,7 @@ pub struct Production {
 pub struct Region {
     pub name: String,
     pub num: i32,
-    pub terrain_type: TerrainId,
+    pub terrain_type: Option<TerrainId>,
     pub xloc: i32,
     pub yloc: i32,
     pub zloc: i32,
@@ -258,7 +287,7 @@ impl Default for Region {
         Self {
             name: "Region".to_owned(),
             num: 0,
-            terrain_type: 0,
+            terrain_type: None,
             xloc: 0,
             yloc: 0,
             zloc: 0,
