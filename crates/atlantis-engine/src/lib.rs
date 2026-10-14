@@ -2,6 +2,7 @@
 
 pub mod defs;
 pub mod edit;
+pub mod economy;
 pub mod model;
 pub mod newgame;
 pub mod npc;
@@ -13,6 +14,7 @@ pub mod ruleset;
 pub mod save;
 pub mod text;
 pub mod version;
+pub mod world;
 
 #[cfg(test)]
 mod version_tests {

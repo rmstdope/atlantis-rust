@@ -113,6 +113,8 @@ fn wrap_coordinate(coordinate: i32, size: i32) -> Option<i32> {
 pub enum ModelError {
     MissingRegion(RegionId),
     MissingObject(ObjectId),
+    ObjectHasNoRegion(ObjectId),
+    ObjectContainsUnits(ObjectId),
     MissingUnit(UnitId),
     UnitNumberOverflow,
 }
@@ -122,6 +124,12 @@ impl std::fmt::Display for ModelError {
         match self {
             Self::MissingRegion(id) => write!(formatter, "region {} does not exist", id.index()),
             Self::MissingObject(id) => write!(formatter, "object {} does not exist", id.index()),
+            Self::ObjectHasNoRegion(id) => {
+                write!(formatter, "object {} has no region", id.index())
+            }
+            Self::ObjectContainsUnits(id) => {
+                write!(formatter, "object {} still contains units", id.index())
+            }
             Self::MissingUnit(id) => write!(formatter, "unit {} does not exist", id.index()),
             Self::UnitNumberOverflow => {
                 formatter.write_str("unit number exceeds the supported range")
@@ -300,6 +308,25 @@ impl Game {
             .unit_ids
             .clear();
         Ok(())
+    }
+
+    pub fn remove_empty_object(&mut self, object_id: ObjectId) -> Result<Object, ModelError> {
+        let object = self
+            .object(object_id)
+            .ok_or(ModelError::MissingObject(object_id))?;
+        if !object.unit_ids.is_empty() {
+            return Err(ModelError::ObjectContainsUnits(object_id));
+        }
+        let region_id = object
+            .region
+            .ok_or(ModelError::ObjectHasNoRegion(object_id))?;
+        self.region_mut(region_id)
+            .ok_or(ModelError::MissingRegion(region_id))?
+            .object_ids
+            .retain(|id| *id != object_id);
+        Ok(self.objects[object_id.index()]
+            .take()
+            .expect("object was checked above"))
     }
 
     pub fn add_unit(&mut self, object_id: ObjectId, mut unit: Unit) -> Result<UnitId, ModelError> {

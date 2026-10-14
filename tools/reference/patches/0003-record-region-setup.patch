@@ -1,0 +1,200 @@
+--- a/main.cpp
++++ b/main.cpp
+@@ -35,6 +35,11 @@
+ #include "skills.h"
+ #include "gamedata.h"
+ #include "aregion.h"
++#include "gameio.h"
++#include "market.h"
++#include "production.h"
++#include "object.h"
++extern void SetupNames();
+ 
+ #include <cstddef>
+ #include <iostream>
+@@ -796,10 +800,185 @@
+ 	if (argc == 2 && AString(argv[1]) == "dump-tables") {
+ 		game.ModifyTablesPerRuleset();
+ 		int result = DumpTables();
+ 		if (result != 0) std::cerr << "Unable to write effective rules tables\n";
+ 		doneIO();
+ 		return result;
+ 	}
+ 
++	if (argc == 2 && AString(argv[1]) == "dump-region-setup") {
++		game.ModifyTablesPerRuleset();
++		SetupNames();
++		seedrandom(424242);
++
++		ARegion region;
++		region.type = R_PLAIN;
++		region.race = -1;
++		region.population = 0;
++		region.basepopulation = 0;
++		region.SetLoc(1, 1, ARegionArray::LEVEL_SURFACE);
++		region.Setup();
++
++		std::cout << "{\"seed\":424242,\"terrain\":" << region.type
++				  << ",\"is_coastal\":" << (region.IsCoastal() ? "true" : "false")
++				  << ",\"race\":" << region.race
++				  << ",\"population\":" << region.population
++				  << ",\"base_population\":" << region.basepopulation
++				  << ",\"wages\":" << region.wages
++				  << ",\"max_wages\":" << region.maxwages
++				  << ",\"wealth\":" << region.wealth
++				  << ",\"habitat\":" << region.habitat
++				  << ",\"development\":" << region.development
++				  << ",\"max_development\":" << region.maxdevelopment
++				  << ",\"building_seq\":" << region.buildingseq
++				  << ",\"town\":";
++		if (region.town) {
++			std::cout << "{\"name\":";
++			writeJsonString(std::cout,
++					region.town->name ? region.town->name->Str() : nullptr);
++			std::cout << ",\"population\":" << region.town->pop
++					  << ",\"habitat\":" << region.town->hab
++					  << ",\"development\":" << region.town->dev
++					  << ",\"activity\":" << region.town->activity << "}";
++		} else {
++			std::cout << "null";
++		}
++
++		std::cout << ",\"products\":[";
++		bool first = true;
++		{
++			forlist(&region.products) {
++				Production *product = (Production *)elem;
++				if (!first) std::cout << ",";
++				first = false;
++				std::cout << "{\"item_type\":" << product->itemtype
++						  << ",\"base_amount\":" << product->baseamount
++						  << ",\"amount\":" << product->amount
++						  << ",\"skill\":" << product->skill
++						  << ",\"productivity\":" << product->productivity
++						  << ",\"activity\":" << product->activity << "}";
++			}
++		}
++		std::cout << "],\"markets\":[";
++		first = true;
++		{
++			forlist(&region.markets) {
++				Market *market = (Market *)elem;
++				if (!first) std::cout << ",";
++				first = false;
++				std::cout << "{\"market_type\":" << market->type
++						  << ",\"item\":" << market->item
++						  << ",\"price\":" << market->price
++						  << ",\"amount\":" << market->amount
++						  << ",\"min_population\":" << market->minpop
++						  << ",\"max_population\":" << market->maxpop
++						  << ",\"min_amount\":" << market->minamt
++						  << ",\"max_amount\":" << market->maxamt
++						  << ",\"base_price\":" << market->baseprice
++						  << ",\"activity\":" << market->activity << "}";
++			}
++		}
++		std::cout << "],\"objects\":[";
++		first = true;
++		{
++			forlist(&region.objects) {
++				Object *object = (Object *)elem;
++				if (!first) std::cout << ",";
++				first = false;
++				std::cout << "{\"object_type\":" << object->type
++						  << ",\"num\":" << object->num << ",\"name\":";
++				writeJsonString(std::cout, object->name ? object->name->Str() : nullptr);
++				std::cout << "}";
++			}
++		}
++		RegionSetup settings;
++		settings.terrain = &TerrainDefs[R_PLAIN];
++		settings.habitat = 1000;
++		settings.prodWeight = 1.0;
++		settings.addLair = false;
++		settings.addSettlement = true;
++		settings.settlementName = "Reference City";
++		settings.settlementSize = 2;
++		ARegion cityMarketRegion;
++		cityMarketRegion.type = R_PLAIN;
++		cityMarketRegion.race = region.race;
++		seedrandom(424242);
++		cityMarketRegion.ManualSetup(settings);
++
++		std::cout << "],\"manual_setup\":{\"race\":" << cityMarketRegion.race
++				  << ",\"population\":" << cityMarketRegion.population
++				  << ",\"base_population\":" << cityMarketRegion.basepopulation
++				  << ",\"wages\":" << cityMarketRegion.wages
++				  << ",\"max_wages\":" << cityMarketRegion.maxwages
++				  << ",\"wealth\":" << cityMarketRegion.wealth
++				  << ",\"habitat\":" << cityMarketRegion.habitat
++				  << ",\"development\":" << cityMarketRegion.development
++				  << ",\"max_development\":" << cityMarketRegion.maxdevelopment
++				  << ",\"town\":";
++		if (cityMarketRegion.town) {
++			std::cout << "{\"name\":";
++			writeJsonString(std::cout, cityMarketRegion.town->name
++					? cityMarketRegion.town->name->Str() : nullptr);
++			std::cout << ",\"population\":" << cityMarketRegion.town->pop
++					  << ",\"habitat\":" << cityMarketRegion.town->hab
++					  << ",\"development\":" << cityMarketRegion.town->dev
++					  << ",\"activity\":" << cityMarketRegion.town->activity << "}";
++		} else {
++			std::cout << "null";
++		}
++
++		std::cout << ",\"products\":[";
++		first = true;
++		{
++			forlist(&cityMarketRegion.products) {
++				Production *product = (Production *)elem;
++				if (!first) std::cout << ",";
++				first = false;
++				std::cout << "{\"item_type\":" << product->itemtype
++						  << ",\"base_amount\":" << product->baseamount
++						  << ",\"amount\":" << product->amount
++						  << ",\"skill\":" << product->skill
++						  << ",\"productivity\":" << product->productivity
++						  << ",\"activity\":" << product->activity << "}";
++			}
++		}
++		std::cout << "],\"markets\":[";
++		first = true;
++		{
++			forlist(&cityMarketRegion.markets) {
++				Market *market = (Market *)elem;
++				if (!first) std::cout << ",";
++				first = false;
++				std::cout << "{\"market_type\":" << market->type
++						  << ",\"item\":" << market->item
++						  << ",\"price\":" << market->price
++						  << ",\"amount\":" << market->amount
++						  << ",\"min_population\":" << market->minpop
++						  << ",\"max_population\":" << market->maxpop
++						  << ",\"min_amount\":" << market->minamt
++						  << ",\"max_amount\":" << market->maxamt
++						  << ",\"base_price\":" << market->baseprice
++						  << ",\"activity\":" << market->activity << "}";
++			}
++		}
++		std::cout << "],\"objects\":[";
++		first = true;
++		{
++			forlist(&cityMarketRegion.objects) {
++				Object *object = (Object *)elem;
++				if (!first) std::cout << ",";
++				first = false;
++				std::cout << "{\"object_type\":" << object->type
++						  << ",\"num\":" << object->num << ",\"name\":";
++				writeJsonString(std::cout, object->name ? object->name->Str() : nullptr);
++				std::cout << "}";
++			}
++		}
++		std::cout << "]}}\n";
++		std::cout.flush();
++		int result = std::cout ? 0 : 1;
++		doneIO();
++		return result;
++	}
++
+ 	Awrite(AString("Atlantis Engine Version: ") +
+ 			ATL_VER_STRING(CURRENT_ATL_VER));
