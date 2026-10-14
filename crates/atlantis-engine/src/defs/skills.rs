@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SkillDependency {
-    pub skill: Option<&'static str>,
+    pub skill: Option<usize>,
     pub level: i32,
 }
 
@@ -14,8 +14,8 @@ pub struct SkillDef {
     pub abbreviation: Option<&'static str>,
     pub cost: i32,
     pub flags: i32,
-    pub special: Option<&'static str>,
-    pub range: Option<&'static str>,
+    pub special: Option<usize>,
+    pub range: Option<usize>,
     pub dependencies: [SkillDependency; 3],
 }
 
@@ -38,7 +38,7 @@ pub struct SpecialDamage {
     pub value: i32,
     pub flags: i32,
     pub class: i32,
-    pub effect: Option<&'static str>,
+    pub effect: Option<usize>,
     pub hit_damage: i32,
 }
 
@@ -49,7 +49,7 @@ pub struct SpecialDef {
     pub target_flags: i32,
     pub buildings: [i32; 5],
     pub targets: [i32; 7],
-    pub effects: [Option<&'static str>; 3],
+    pub effects: [Option<usize>; 3],
     pub effect_flags: i32,
     pub shields: [i32; 4],
     pub defenses: [DefenseModifier; 4],
@@ -65,7 +65,7 @@ pub struct EffectDef {
     pub name: Option<&'static str>,
     pub attack_value: i32,
     pub defense_modifiers: [DefenseModifier; 4],
-    pub cancel_effect: Option<&'static str>,
+    pub cancel_effect: Option<usize>,
     pub flags: i32,
 }
 
@@ -99,6 +99,24 @@ pub struct ShowDef {
     pub level: i32,
     pub description: Option<&'static str>,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct InvalidTableReference {
+    pub table: &'static str,
+    pub index: usize,
+}
+
+impl std::fmt::Display for InvalidTableReference {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "invalid reference to {} table index {}",
+            self.table, self.index
+        )
+    }
+}
+
+impl std::error::Error for InvalidTableReference {}
 
 /// C++: `gamedata.cpp` `sd` (`SkillDefs`) table order.
 pub const SKILL_DEFS: &[SkillDef] = &[
@@ -701,11 +719,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         abbreviation: Some("FIRE"),
         cost: 100,
         flags: 515,
-        special: Some("fireball"),
+        special: Some(1),
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("FORC"),
+                skill: Some(24),
                 level: 1,
             },
             SkillDependency {
@@ -723,15 +741,15 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         abbreviation: Some("EQUA"),
         cost: 100,
         flags: 515,
-        special: Some("earthquake"),
+        special: Some(6),
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("FORC"),
+                skill: Some(24),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("PATT"),
+                skill: Some(25),
                 level: 1,
             },
             SkillDependency {
@@ -745,11 +763,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         abbreviation: Some("FSHI"),
         cost: 100,
         flags: 2051,
-        special: Some("force_shield"),
+        special: Some(7),
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("FORC"),
+                skill: Some(24),
                 level: 1,
             },
             SkillDependency {
@@ -767,11 +785,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         abbreviation: Some("ESHI"),
         cost: 100,
         flags: 2051,
-        special: Some("energy_shield"),
+        special: Some(8),
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("FORC"),
+                skill: Some(24),
                 level: 1,
             },
             SkillDependency {
@@ -789,15 +807,15 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         abbreviation: Some("SSHI"),
         cost: 100,
         flags: 2051,
-        special: Some("shield_spirit"),
+        special: Some(9),
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("SPIR"),
+                skill: Some(26),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("FORC"),
+                skill: Some(24),
                 level: 1,
             },
             SkillDependency {
@@ -815,7 +833,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("PATT"),
+                skill: Some(25),
                 level: 1,
             },
             SkillDependency {
@@ -837,11 +855,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("PATT"),
+                skill: Some(25),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("SPIR"),
+                skill: Some(26),
                 level: 1,
             },
             SkillDependency {
@@ -856,14 +874,14 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         cost: 100,
         flags: 5,
         special: None,
-        range: Some("rng_farsight"),
+        range: Some(2),
         dependencies: [
             SkillDependency {
-                skill: Some("PATT"),
+                skill: Some(25),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("SPIR"),
+                skill: Some(26),
                 level: 1,
             },
             SkillDependency {
@@ -878,14 +896,14 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         cost: 100,
         flags: 5,
         special: None,
-        range: Some("rng_teleport"),
+        range: Some(0),
         dependencies: [
             SkillDependency {
-                skill: Some("GATE"),
+                skill: Some(33),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("FARS"),
+                skill: Some(34),
                 level: 2,
             },
             SkillDependency {
@@ -900,14 +918,14 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         cost: 100,
         flags: 5,
         special: None,
-        range: Some("rng_portal"),
+        range: Some(1),
         dependencies: [
             SkillDependency {
-                skill: Some("GATE"),
+                skill: Some(33),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("FARS"),
+                skill: Some(34),
                 level: 1,
             },
             SkillDependency {
@@ -925,7 +943,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("PATT"),
+                skill: Some(25),
                 level: 1,
             },
             SkillDependency {
@@ -944,14 +962,14 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         cost: 100,
         flags: 261,
         special: None,
-        range: Some("rng_weather"),
+        range: Some(3),
         dependencies: [
             SkillDependency {
-                skill: Some("FORC"),
+                skill: Some(24),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("PATT"),
+                skill: Some(25),
                 level: 1,
             },
             SkillDependency {
@@ -969,7 +987,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("WEAT"),
+                skill: Some(38),
                 level: 1,
             },
             SkillDependency {
@@ -987,11 +1005,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         abbreviation: Some("SSTO"),
         cost: 100,
         flags: 1027,
-        special: Some("storm"),
+        special: Some(11),
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("WEAT"),
+                skill: Some(38),
                 level: 1,
             },
             SkillDependency {
@@ -1009,11 +1027,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         abbreviation: Some("STOR"),
         cost: 100,
         flags: 515,
-        special: Some("tornado"),
+        special: Some(12),
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("WEAT"),
+                skill: Some(38),
                 level: 3,
             },
             SkillDependency {
@@ -1031,11 +1049,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         abbreviation: Some("CALL"),
         cost: 100,
         flags: 515,
-        special: Some("lightning"),
+        special: Some(4),
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("WEAT"),
+                skill: Some(38),
                 level: 5,
             },
             SkillDependency {
@@ -1053,11 +1071,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         abbreviation: Some("CLEA"),
         cost: 100,
         flags: 2055,
-        special: Some("clear_skies"),
+        special: Some(13),
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("WEAT"),
+                skill: Some(38),
                 level: 1,
             },
             SkillDependency {
@@ -1079,11 +1097,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("PATT"),
+                skill: Some(25),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("FORC"),
+                skill: Some(24),
                 level: 1,
             },
             SkillDependency {
@@ -1101,7 +1119,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("EART"),
+                skill: Some(44),
                 level: 1,
             },
             SkillDependency {
@@ -1123,7 +1141,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("EART"),
+                skill: Some(44),
                 level: 1,
             },
             SkillDependency {
@@ -1145,11 +1163,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("BIRD"),
+                skill: Some(46),
                 level: 3,
             },
             SkillDependency {
-                skill: Some("WOLF"),
+                skill: Some(45),
                 level: 3,
             },
             SkillDependency {
@@ -1167,11 +1185,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("FORC"),
+                skill: Some(24),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("SPIR"),
+                skill: Some(26),
                 level: 1,
             },
             SkillDependency {
@@ -1189,7 +1207,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("NECR"),
+                skill: Some(48),
                 level: 1,
             },
             SkillDependency {
@@ -1211,7 +1229,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("NECR"),
+                skill: Some(48),
                 level: 3,
             },
             SkillDependency {
@@ -1233,7 +1251,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("NECR"),
+                skill: Some(48),
                 level: 5,
             },
             SkillDependency {
@@ -1251,11 +1269,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         abbreviation: Some("FEAR"),
         cost: 100,
         flags: 1027,
-        special: Some("fear"),
+        special: Some(3),
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("NECR"),
+                skill: Some(48),
                 level: 1,
             },
             SkillDependency {
@@ -1273,11 +1291,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         abbreviation: Some("SBLA"),
         cost: 100,
         flags: 515,
-        special: Some("black_wind"),
+        special: Some(14),
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("NECR"),
+                skill: Some(48),
                 level: 5,
             },
             SkillDependency {
@@ -1295,11 +1313,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         abbreviation: Some("BUND"),
         cost: 100,
         flags: 3,
-        special: Some("banish_undead"),
+        special: Some(15),
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("NECR"),
+                skill: Some(48),
                 level: 1,
             },
             SkillDependency {
@@ -1321,11 +1339,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("FORC"),
+                skill: Some(24),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("SPIR"),
+                skill: Some(26),
                 level: 1,
             },
             SkillDependency {
@@ -1343,7 +1361,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("DEMO"),
+                skill: Some(55),
                 level: 1,
             },
             SkillDependency {
@@ -1365,7 +1383,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("SUIM"),
+                skill: Some(56),
                 level: 3,
             },
             SkillDependency {
@@ -1387,7 +1405,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("SUDE"),
+                skill: Some(57),
                 level: 3,
             },
             SkillDependency {
@@ -1405,11 +1423,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         abbreviation: Some("BDEM"),
         cost: 100,
         flags: 3,
-        special: Some("banish_demon"),
+        special: Some(16),
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("DEMO"),
+                skill: Some(55),
                 level: 1,
             },
             SkillDependency {
@@ -1431,11 +1449,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("FORC"),
+                skill: Some(24),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("PATT"),
+                skill: Some(25),
                 level: 1,
             },
             SkillDependency {
@@ -1453,7 +1471,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ILLU"),
+                skill: Some(60),
                 level: 1,
             },
             SkillDependency {
@@ -1475,7 +1493,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ILLU"),
+                skill: Some(60),
                 level: 1,
             },
             SkillDependency {
@@ -1497,7 +1515,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ILLU"),
+                skill: Some(60),
                 level: 1,
             },
             SkillDependency {
@@ -1519,7 +1537,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ILLU"),
+                skill: Some(60),
                 level: 1,
             },
             SkillDependency {
@@ -1541,7 +1559,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ILLU"),
+                skill: Some(60),
                 level: 3,
             },
             SkillDependency {
@@ -1563,7 +1581,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ILLU"),
+                skill: Some(60),
                 level: 3,
             },
             SkillDependency {
@@ -1581,11 +1599,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         abbreviation: Some("DISP"),
         cost: 100,
         flags: 3,
-        special: Some("dispel_illusion"),
+        special: Some(10),
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ILLU"),
+                skill: Some(60),
                 level: 1,
             },
             SkillDependency {
@@ -1607,15 +1625,15 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("FORC"),
+                skill: Some(24),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("PATT"),
+                skill: Some(25),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("SPIR"),
+                skill: Some(26),
                 level: 1,
             },
         ],
@@ -1629,11 +1647,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("INVI"),
+                skill: Some(65),
                 level: 3,
             },
             SkillDependency {
@@ -1651,11 +1669,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 4,
             },
             SkillDependency {
-                skill: Some("FSHI"),
+                skill: Some(29),
                 level: 4,
             },
             SkillDependency {
@@ -1673,11 +1691,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("FIRE"),
+                skill: Some(27),
                 level: 3,
             },
             SkillDependency {
@@ -1695,11 +1713,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 4,
             },
             SkillDependency {
-                skill: Some("CALL"),
+                skill: Some(42),
                 level: 3,
             },
             SkillDependency {
@@ -1717,11 +1735,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("TRUE"),
+                skill: Some(66),
                 level: 3,
             },
             SkillDependency {
@@ -1739,11 +1757,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("SSHI"),
+                skill: Some(31),
                 level: 3,
             },
             SkillDependency {
@@ -1761,11 +1779,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("FEAR"),
+                skill: Some(52),
                 level: 3,
             },
             SkillDependency {
@@ -1783,11 +1801,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("ESHI"),
+                skill: Some(30),
                 level: 3,
             },
             SkillDependency {
@@ -1805,11 +1823,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("WEAT"),
+                skill: Some(38),
                 level: 3,
             },
             SkillDependency {
@@ -1827,15 +1845,15 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("ESHI"),
+                skill: Some(30),
                 level: 3,
             },
             SkillDependency {
-                skill: Some("SSHI"),
+                skill: Some(31),
                 level: 3,
             },
         ],
@@ -1849,11 +1867,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("GATE"),
+                skill: Some(33),
                 level: 3,
             },
             SkillDependency {
@@ -1871,7 +1889,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
@@ -1893,7 +1911,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
@@ -1915,7 +1933,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 1,
             },
             SkillDependency {
@@ -1937,11 +1955,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("PORT"),
+                skill: Some(36),
                 level: 2,
             },
             SkillDependency {
@@ -1981,7 +1999,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("WEAP"),
+                skill: Some(7),
                 level: 5,
             },
             SkillDependency {
@@ -2003,7 +2021,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARMO"),
+                skill: Some(8),
                 level: 5,
             },
             SkillDependency {
@@ -2091,11 +2109,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("FIRE"),
+                skill: Some(27),
                 level: 3,
             },
             SkillDependency {
@@ -2135,7 +2153,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("EART"),
+                skill: Some(44),
                 level: 1,
             },
             SkillDependency {
@@ -2179,11 +2197,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("TRUE"),
+                skill: Some(66),
                 level: 5,
             },
             SkillDependency {
@@ -2201,11 +2219,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("SWIN"),
+                skill: Some(39),
                 level: 2,
             },
             SkillDependency {
@@ -2223,11 +2241,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("GATE"),
+                skill: Some(33),
                 level: 2,
             },
             SkillDependency {
@@ -2245,11 +2263,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("MHEA"),
+                skill: Some(32),
                 level: 2,
             },
             SkillDependency {
@@ -2267,11 +2285,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("FARS"),
+                skill: Some(34),
                 level: 2,
             },
             SkillDependency {
@@ -2289,11 +2307,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 1,
             },
             SkillDependency {
-                skill: Some("EART"),
+                skill: Some(44),
                 level: 2,
             },
             SkillDependency {
@@ -2311,11 +2329,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("BDEM"),
+                skill: Some(59),
                 level: 2,
             },
             SkillDependency {
@@ -2333,11 +2351,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("BUND"),
+                skill: Some(54),
                 level: 2,
             },
             SkillDependency {
@@ -2355,11 +2373,11 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 2,
             },
             SkillDependency {
-                skill: Some("FSHI"),
+                skill: Some(29),
                 level: 3,
             },
             SkillDependency {
@@ -2377,7 +2395,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("ARTI"),
+                skill: Some(68),
                 level: 1,
             },
             SkillDependency {
@@ -2399,15 +2417,15 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("PATT"),
+                skill: Some(25),
                 level: 4,
             },
             SkillDependency {
-                skill: Some("FORC"),
+                skill: Some(24),
                 level: 4,
             },
             SkillDependency {
-                skill: Some("SPIR"),
+                skill: Some(26),
                 level: 4,
             },
         ],
@@ -2421,7 +2439,7 @@ pub const SKILL_DEFS: &[SkillDef] = &[
         range: None,
         dependencies: [
             SkillDependency {
-                skill: Some("COMB"),
+                skill: Some(14),
                 level: 3,
             },
             SkillDependency {
@@ -2672,7 +2690,7 @@ pub const SPECIAL_DEFS: &[SpecialDef] = &[
         target_flags: 640,
         buildings: [-1, -1, -1, -1, -1],
         targets: [-1, -1, -1, -1, -1, -1, -1],
-        effects: [Some("fear"), None, None],
+        effects: [Some(1), None, None],
         effect_flags: 6,
         shields: [-1, -1, -1, -1],
         defenses: [
@@ -2689,7 +2707,7 @@ pub const SPECIAL_DEFS: &[SpecialDef] = &[
                 value: 25,
                 flags: 130,
                 class: 6,
-                effect: Some("fear"),
+                effect: Some(1),
                 hit_damage: 1,
             },
             SpecialDamage {
@@ -3136,7 +3154,7 @@ pub const SPECIAL_DEFS: &[SpecialDef] = &[
         target_flags: 128,
         buildings: [-1, -1, -1, -1, -1],
         targets: [-1, -1, -1, -1, -1, -1, -1],
-        effects: [Some("storm"), None, None],
+        effects: [Some(2), None, None],
         effect_flags: 6,
         shields: [-1, -1, -1, -1],
         defenses: [
@@ -3153,7 +3171,7 @@ pub const SPECIAL_DEFS: &[SpecialDef] = &[
                 value: 50,
                 flags: 130,
                 class: 7,
-                effect: Some("storm"),
+                effect: Some(2),
                 hit_damage: 1,
             },
             SpecialDamage {
@@ -3600,7 +3618,7 @@ pub const SPECIAL_DEFS: &[SpecialDef] = &[
         target_flags: 144,
         buildings: [-1, -1, -1, -1, -1],
         targets: [28, -1, -1, -1, -1, -1, -1],
-        effects: [Some("spook"), None, None],
+        effects: [Some(3), None, None],
         effect_flags: 2,
         shields: [-1, -1, -1, -1],
         defenses: [
@@ -3617,7 +3635,7 @@ pub const SPECIAL_DEFS: &[SpecialDef] = &[
                 value: 0,
                 flags: 130,
                 class: 6,
-                effect: Some("spook"),
+                effect: Some(3),
                 hit_damage: 1,
             },
             SpecialDamage {
@@ -4385,15 +4403,15 @@ pub fn lookup_skill(defs: &[SkillDef], abbreviation: &str) -> Option<usize> {
 
 /// C++: `skills.cpp` `ParseSkill`; names and abbreviations of disabled skills are rejected.
 pub fn parse_skill(defs: &[SkillDef], name_or_abbreviation: &str) -> Option<usize> {
-    defs.iter().position(|skill| {
-        skill.flags & skill_flags::DISABLED == 0
-            && (skill
-                .name
+    let index = defs.iter().position(|skill| {
+        skill
+            .name
+            .is_some_and(|value| crate::text::is_equal(value, name_or_abbreviation))
+            || skill
+                .abbreviation
                 .is_some_and(|value| crate::text::is_equal(value, name_or_abbreviation))
-                || skill
-                    .abbreviation
-                    .is_some_and(|value| crate::text::is_equal(value, name_or_abbreviation)))
-    })
+    })?;
+    (defs[index].flags & skill_flags::DISABLED == 0).then_some(index)
 }
 
 /// C++: `skills.cpp` `FindSpecial`; returns the matching table index.
@@ -4462,6 +4480,21 @@ fn append_json_string(output: &mut String, value: Option<&str>) {
     output.push('"');
 }
 
+fn reference_name<T>(
+    values: &[T],
+    index: Option<usize>,
+    table: &'static str,
+    name: impl FnOnce(&T) -> Option<&'static str>,
+) -> Result<Option<&'static str>, InvalidTableReference> {
+    let Some(index) = index else {
+        return Ok(None);
+    };
+    let Some(value) = values.get(index).and_then(name) else {
+        return Err(InvalidTableReference { table, index });
+    };
+    Ok(Some(value))
+}
+
 fn append_count(output: &mut String, table: &str, count: usize) {
     output.push_str("{\"table\":\"counts\",\"name\":");
     append_json_string(output, Some(table));
@@ -4494,15 +4527,23 @@ fn append_i32_array<const N: usize>(output: &mut String, values: &[i32; N]) {
     output.push(']');
 }
 
-fn append_string_array<const N: usize>(output: &mut String, values: &[Option<&'static str>; N]) {
+fn append_effect_array(
+    output: &mut String,
+    values: &[Option<usize>; 3],
+    effects: &[EffectDef],
+) -> Result<(), InvalidTableReference> {
     output.push('[');
     for (index, value) in values.iter().enumerate() {
         if index != 0 {
             output.push(',');
         }
-        append_json_string(output, *value);
+        append_json_string(
+            output,
+            reference_name(effects, *value, "effects", |effect| effect.name)?,
+        );
     }
     output.push(']');
+    Ok(())
 }
 
 fn append_defense_array<const N: usize>(output: &mut String, values: &[DefenseModifier; N]) {
@@ -4520,7 +4561,11 @@ fn append_defense_array<const N: usize>(output: &mut String, values: &[DefenseMo
     output.push(']');
 }
 
-fn append_damage_array(output: &mut String, values: &[SpecialDamage; 4]) {
+fn append_damage_array(
+    output: &mut String,
+    values: &[SpecialDamage; 4],
+    effects: &[EffectDef],
+) -> Result<(), InvalidTableReference> {
     output.push('[');
     for (index, value) in values.iter().enumerate() {
         if index != 0 {
@@ -4537,30 +4582,47 @@ fn append_damage_array(output: &mut String, values: &[SpecialDamage; 4]) {
         output.push_str(",\"class\":");
         append_number(output, value.class);
         output.push_str(",\"effect\":");
-        append_json_string(output, value.effect);
+        append_json_string(
+            output,
+            reference_name(effects, value.effect, "effects", |effect| effect.name)?,
+        );
         output.push_str(",\"hit_damage\":");
         append_number(output, value.hit_damage);
         output.push('}');
     }
     output.push(']');
+    Ok(())
 }
 
-fn append_dependencies(output: &mut String, values: &[SkillDependency; 3]) {
+fn append_dependencies(
+    output: &mut String,
+    values: &[SkillDependency; 3],
+    skills: &[SkillDef],
+) -> Result<(), InvalidTableReference> {
     output.push('[');
     for (index, value) in values.iter().enumerate() {
         if index != 0 {
             output.push(',');
         }
         output.push_str("{\"skill\":");
-        append_json_string(output, value.skill);
+        append_json_string(
+            output,
+            reference_name(skills, value.skill, "skills", |skill| skill.abbreviation)?,
+        );
         output.push_str(",\"level\":");
         append_number(output, value.level);
         output.push('}');
     }
     output.push(']');
+    Ok(())
 }
 
-fn write_skills(output: &mut String, skills: &[SkillDef]) {
+fn write_skills(
+    output: &mut String,
+    skills: &[SkillDef],
+    specials: &[SpecialDef],
+    ranges: &[RangeDef],
+) -> Result<(), InvalidTableReference> {
     append_count(output, "skills", skills.len());
     for (index, skill) in skills.iter().enumerate() {
         begin_indexed_row(output, "skills", index);
@@ -4573,13 +4635,20 @@ fn write_skills(output: &mut String, skills: &[SkillDef]) {
         append_field(output, "flags");
         append_number(output, skill.flags);
         append_field(output, "special");
-        append_json_string(output, skill.special);
+        append_json_string(
+            output,
+            reference_name(specials, skill.special, "specials", |special| special.key)?,
+        );
         append_field(output, "range");
-        append_json_string(output, skill.range);
+        append_json_string(
+            output,
+            reference_name(ranges, skill.range, "ranges", |range| range.key)?,
+        );
         append_field(output, "dependencies");
-        append_dependencies(output, &skill.dependencies);
+        append_dependencies(output, &skill.dependencies, skills)?;
         output.push_str("}\n");
     }
+    Ok(())
 }
 
 fn write_healing(output: &mut String, table: &str, values: &[HealingDef]) {
@@ -4594,7 +4663,11 @@ fn write_healing(output: &mut String, table: &str, values: &[HealingDef]) {
     }
 }
 
-fn write_specials(output: &mut String, values: &[SpecialDef]) {
+fn write_specials(
+    output: &mut String,
+    values: &[SpecialDef],
+    effects: &[EffectDef],
+) -> Result<(), InvalidTableReference> {
     append_count(output, "specials", values.len());
     for (index, special) in values.iter().enumerate() {
         begin_indexed_row(output, "specials", index);
@@ -4609,7 +4682,7 @@ fn write_specials(output: &mut String, values: &[SpecialDef]) {
         append_field(output, "targets");
         append_i32_array(output, &special.targets);
         append_field(output, "effects");
-        append_string_array(output, &special.effects);
+        append_effect_array(output, &special.effects, effects)?;
         append_field(output, "effect_flags");
         append_number(output, special.effect_flags);
         append_field(output, "shields");
@@ -4619,7 +4692,7 @@ fn write_specials(output: &mut String, values: &[SpecialDef]) {
         append_field(output, "shield_description");
         append_json_string(output, special.shield_description);
         append_field(output, "damage");
-        append_damage_array(output, &special.damage);
+        append_damage_array(output, &special.damage, effects)?;
         append_field(output, "spell_description");
         append_json_string(output, special.spell_description);
         append_field(output, "secondary_spell_description");
@@ -4628,9 +4701,10 @@ fn write_specials(output: &mut String, values: &[SpecialDef]) {
         append_json_string(output, special.spell_target);
         output.push_str("}\n");
     }
+    Ok(())
 }
 
-fn write_effects(output: &mut String, values: &[EffectDef]) {
+fn write_effects(output: &mut String, values: &[EffectDef]) -> Result<(), InvalidTableReference> {
     append_count(output, "effects", values.len());
     for (index, effect) in values.iter().enumerate() {
         begin_indexed_row(output, "effects", index);
@@ -4641,11 +4715,17 @@ fn write_effects(output: &mut String, values: &[EffectDef]) {
         append_field(output, "defense_modifiers");
         append_defense_array(output, &effect.defense_modifiers);
         append_field(output, "cancel_effect");
-        append_json_string(output, effect.cancel_effect);
+        append_json_string(
+            output,
+            reference_name(values, effect.cancel_effect, "effects", |effect| {
+                effect.name
+            })?,
+        );
         append_field(output, "flags");
         append_number(output, effect.flags);
         output.push_str("}\n");
     }
+    Ok(())
 }
 
 fn write_ranges(output: &mut String, values: &[RangeDef]) {
@@ -4695,15 +4775,50 @@ fn write_attributes(output: &mut String, values: &[AttributeModifierDef]) {
     }
 }
 
+fn validate_references(tables: &SkillTables) -> Result<(), InvalidTableReference> {
+    for skill in &tables.skills {
+        reference_name(&tables.specials, skill.special, "specials", |special| {
+            special.key
+        })?;
+        reference_name(&tables.ranges, skill.range, "ranges", |range| range.key)?;
+        for dependency in &skill.dependencies {
+            reference_name(&tables.skills, dependency.skill, "skills", |skill| {
+                skill.abbreviation
+            })?;
+        }
+    }
+    for special in &tables.specials {
+        for effect in &special.effects {
+            reference_name(&tables.effects, *effect, "effects", |effect| effect.name)?;
+        }
+        for damage in &special.damage {
+            reference_name(&tables.effects, damage.effect, "effects", |effect| {
+                effect.name
+            })?;
+        }
+    }
+    for effect in &tables.effects {
+        reference_name(&tables.effects, effect.cancel_effect, "effects", |effect| {
+            effect.name
+        })?;
+    }
+    Ok(())
+}
+
 /// Writes ordered family records using the C++ reference dump's JSONL schema.
-pub fn write_skill_family_jsonl(output: &mut String, tables: &SkillTables) {
-    write_skills(output, &tables.skills);
+pub fn write_skill_family_jsonl(
+    output: &mut String,
+    tables: &SkillTables,
+) -> Result<(), InvalidTableReference> {
+    validate_references(tables)?;
+    write_skills(output, &tables.skills, &tables.specials, &tables.ranges)?;
     write_healing(output, "healing", &tables.healing);
     write_healing(output, "magic_healing", &tables.magic_healing);
-    write_specials(output, &tables.specials);
-    write_effects(output, &tables.effects);
+    write_specials(output, &tables.specials, &tables.effects)?;
+    write_effects(output, &tables.effects)?;
     write_ranges(output, &tables.ranges);
     write_attributes(output, &tables.attribute_modifiers);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -4711,13 +4826,15 @@ mod tests {
     use super::skill_flags;
     use super::{
         find_attribute, find_effect, find_range, find_skill, find_special, lookup_skill,
-        parse_skill, write_skill_family_jsonl, SkillDef, SkillDependency, SkillTables,
+        parse_skill, write_skill_family_jsonl, InvalidTableReference, SkillDef, SkillDependency,
+        SkillTables,
     };
 
     #[test]
     fn base_skill_families_match_pre_modify_reference_standard() {
         let mut actual = String::new();
-        write_skill_family_jsonl(&mut actual, &SkillTables::default());
+        write_skill_family_jsonl(&mut actual, &SkillTables::default())
+            .expect("default skill references are valid");
         assert_eq!(
             actual,
             include_str!("../../../../fixtures/tables/pre-modify-skill-families/standard.jsonl")
@@ -4727,11 +4844,60 @@ mod tests {
     #[test]
     fn base_skill_families_match_pre_modify_reference_neworigins() {
         let mut actual = String::new();
-        write_skill_family_jsonl(&mut actual, &SkillTables::default());
+        write_skill_family_jsonl(&mut actual, &SkillTables::default())
+            .expect("default skill references are valid");
         assert_eq!(
             actual,
             include_str!("../../../../fixtures/tables/pre-modify-skill-families/neworigins.jsonl")
         );
+    }
+
+    #[test]
+    fn writer_resolves_numeric_references_through_table_indices() {
+        let mut tables = SkillTables::default();
+        tables.skills[0].dependencies[0].skill = Some(1);
+        tables.skills[0].special = Some(1);
+        tables.skills[0].range = Some(1);
+        tables.skills[1].abbreviation = Some("test_skill");
+        tables.specials[1].key = Some("test_special");
+        tables.specials[1].effects[0] = Some(2);
+        tables.specials[1].damage[0].effect = Some(3);
+        tables.ranges[1].key = Some("test_range");
+        tables.effects[1].name = Some("test_cancel_effect");
+        tables.effects[2].name = Some("test_effect");
+        tables.effects[3].name = Some("test_damage_effect");
+        tables.effects[0].cancel_effect = Some(1);
+
+        let mut actual = String::new();
+        write_skill_family_jsonl(&mut actual, &tables)
+            .expect("all table references point to named rows");
+
+        for reference in [
+            "\"skill\":\"test_skill\"",
+            "\"special\":\"test_special\"",
+            "\"range\":\"test_range\"",
+            "\"effects\":[\"test_effect\"",
+            "\"effect\":\"test_damage_effect\"",
+            "\"cancel_effect\":\"test_cancel_effect\"",
+        ] {
+            assert!(actual.contains(reference), "missing {reference}");
+        }
+    }
+
+    #[test]
+    fn writer_rejects_out_of_range_references_before_writing() {
+        let mut tables = SkillTables::default();
+        tables.skills[0].special = Some(usize::MAX);
+        let mut actual = String::new();
+
+        assert_eq!(
+            write_skill_family_jsonl(&mut actual, &tables),
+            Err(InvalidTableReference {
+                table: "specials",
+                index: usize::MAX,
+            })
+        );
+        assert!(actual.is_empty());
     }
 
     #[test]
@@ -4759,6 +4925,16 @@ mod tests {
         }];
         assert_eq!(lookup_skill(&disabled, "dabl"), Some(0));
         assert_eq!(parse_skill(&disabled, "disabled_skill"), None);
+
+        let duplicate_matches = [
+            disabled[0],
+            SkillDef {
+                abbreviation: Some("ENAB"),
+                flags: 0,
+                ..disabled[0]
+            },
+        ];
+        assert_eq!(parse_skill(&duplicate_matches, "disabled_skill"), None);
     }
 
     #[test]
