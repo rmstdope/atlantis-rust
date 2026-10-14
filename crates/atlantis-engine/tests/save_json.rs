@@ -49,7 +49,9 @@ const GAME_FIXTURES: [(&str, &str); 28] = [
 fn json_roundtrip_preserves_game_and_rng_state() {
     let mut control = load_legacy(STANDARD_GAME).expect("load control fixture");
     control.rng.get_random(23);
-    let expected_next_random = control.rng.get_random(10_000);
+    let expected_sequence = (0..260)
+        .map(|_| control.rng.get_random(10_000))
+        .collect::<Vec<_>>();
 
     let mut original = load_legacy(STANDARD_GAME).expect("load standard fixture");
     original.rng.get_random(23);
@@ -65,8 +67,14 @@ fn json_roundtrip_preserves_game_and_rng_state() {
     assert_eq!(restored.game, expected_game);
     assert_eq!(restored.seed, expected_seed);
     assert_eq!(restored.ruleset.name(), expected_ruleset);
-    assert_eq!(restored.rng.get_random(10_000), expected_next_random);
-    assert_eq!(original.rng.get_random(10_000), expected_next_random);
+    let restored_sequence = (0..260)
+        .map(|_| restored.rng.get_random(10_000))
+        .collect::<Vec<_>>();
+    let original_sequence = (0..260)
+        .map(|_| original.rng.get_random(10_000))
+        .collect::<Vec<_>>();
+    assert_eq!(restored_sequence, expected_sequence);
+    assert_eq!(original_sequence, expected_sequence);
 }
 
 #[test]
