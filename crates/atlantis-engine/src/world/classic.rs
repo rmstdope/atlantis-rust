@@ -1257,6 +1257,31 @@ mod tests {
     }
 
     #[test]
+    fn region_numbers_follow_make_regions_y_then_x_order() {
+        let mut game = Game::default();
+        let level = create_region_array(&mut game, RegionLevelType::Surface, "", 4, 4)
+            .expect("surface region array");
+        let expected = [
+            (0, 0),
+            (2, 0),
+            (1, 1),
+            (3, 1),
+            (0, 2),
+            (2, 2),
+            (1, 3),
+            (3, 3),
+        ];
+
+        for (number, (x, y)) in expected.into_iter().enumerate() {
+            let region_id = game.get_region_at(x, y, level as i32).unwrap();
+            let region = game.region(region_id).unwrap();
+            assert_eq!(game.region_ids()[number], region_id);
+            assert_eq!(region.num, number as i32);
+            assert_eq!((region.xloc, region.yloc), (x, y));
+        }
+    }
+
+    #[test]
     fn nexus_level_is_named_and_uses_nexus_terrain() {
         for (ruleset_name, expected_name) in [("standard", "Unnamed"), ("neworigins", "The Void")] {
             let mut game = Game::default();

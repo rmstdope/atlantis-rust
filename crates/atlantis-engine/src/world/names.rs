@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use crate::{
     defs::terrains::{
         TerrainDef, TerrainId, R_CAVERN, R_FOREST, R_LAKE, R_OCEAN, R_PLAIN, R_UFOREST,
@@ -29,8 +31,13 @@ struct TerrainSuffix {
 }
 
 enum NameGeneratorState {
-    Standard { used: Vec<bool> },
-    NewOrigins { names: Vec<String> },
+    Standard {
+        used: Vec<bool>,
+    },
+    NewOrigins {
+        names: Vec<String>,
+        name_keys: BTreeSet<Vec<u8>>,
+    },
 }
 
 pub(super) struct NameGenerator {
@@ -43,7 +50,10 @@ impl NameGenerator {
             WorldNameStyle::Standard => NameGeneratorState::Standard {
                 used: vec![false; names_data::STANDARD_REGION_NAMES.len()],
             },
-            WorldNameStyle::NewOrigins => NameGeneratorState::NewOrigins { names: Vec::new() },
+            WorldNameStyle::NewOrigins => NameGeneratorState::NewOrigins {
+                names: Vec::new(),
+                name_keys: BTreeSet::new(),
+            },
         };
         Self { state }
     }
@@ -56,8 +66,8 @@ impl NameGenerator {
     ) -> i32 {
         match &mut self.state {
             NameGeneratorState::Standard { used } => next_standard_name(used, rng),
-            NameGeneratorState::NewOrigins { names } => {
-                next_neworigins_name(names, terrain, terrain_defs, false, false, rng)
+            NameGeneratorState::NewOrigins { names, name_keys } => {
+                next_neworigins_name(names, name_keys, terrain, terrain_defs, false, false, rng)
             }
         }
     }
@@ -74,8 +84,8 @@ impl NameGenerator {
                 let index = next_standard_town_name(used, rng) as usize;
                 names_data::STANDARD_REGION_NAMES[index].to_owned()
             }
-            NameGeneratorState::NewOrigins { names } => {
-                next_neworigins_name(names, terrain, terrain_defs, true, port, rng);
+            NameGeneratorState::NewOrigins { names, name_keys } => {
+                next_neworigins_name(names, name_keys, terrain, terrain_defs, true, port, rng);
                 names
                     .last()
                     .expect("town name generation appends a name")
@@ -90,7 +100,7 @@ impl NameGenerator {
             NameGeneratorState::Standard { .. } => {
                 names_data::STANDARD_REGION_NAMES.get(index).copied()
             }
-            NameGeneratorState::NewOrigins { names } => index
+            NameGeneratorState::NewOrigins { names, .. } => index
                 .checked_sub(1)
                 .and_then(|index| names.get(index).map(String::as_str)),
         }
@@ -132,6 +142,7 @@ fn next_standard_name_in_range(
 
 fn next_neworigins_name(
     names: &mut Vec<String>,
+    name_keys: &mut BTreeSet<Vec<u8>>,
     terrain: TerrainId,
     terrain_defs: &[TerrainDef],
     town: bool,
@@ -214,12 +225,16 @@ fn next_neworigins_name(
         if let Some(first) = candidate.get_mut(0..1) {
             first.make_ascii_uppercase();
         }
-        if candidate.len() > 12 || names.iter().any(|name| text::is_equal(name, &candidate)) {
+        if candidate.len() > 12 || !name_keys.insert(name_lookup_key(&candidate)) {
             continue;
         }
         names.push(candidate);
         return names.len() as i32;
     }
+}
+
+fn name_lookup_key(name: &str) -> Vec<u8> {
+    name.bytes().map(text::fold_case_underscore_byte).collect()
 }
 
 fn choose_syllables(rng: &mut Rng) -> usize {
@@ -246,4 +261,26 @@ fn pick_word<'a>(words: &'a [WeightedWord], total: i32, rng: &mut Rng) -> &'a st
         }
     }
     unreachable!("weighted-name probabilities cover every random result")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::name_lookup_key;
+    use crate::text;
+
+    #[test]
+    fn name_lookup_key_matches_atlantis_text_equality() {
+        for (left, right) in [
+            ("River_Guard", "river guard"),
+            ("FOO__BAR", "foo  bar"),
+            ("river-guard", "river guard"),
+            ("é", "É"),
+        ] {
+            assert_eq!(
+                text::is_equal(left, right),
+                name_lookup_key(left) == name_lookup_key(right),
+                "{left:?} versus {right:?}"
+            );
+        }
+    }
 }

@@ -288,4 +288,30 @@ mod tests {
         let tables = ruleset.tables();
         assert_eq!(tables.item_families.items.len(), crate::defs::ITEM_COUNT);
     }
+
+    #[test]
+    fn level_scales_cover_multi_level_underworld_and_underdeep() {
+        fn scales(defs: &GameDefs, level: i32) -> (i32, i32) {
+            (level_x_scale(defs, level), level_y_scale(defs, level))
+        }
+
+        let standard = <dyn Ruleset>::from_name("standard").expect("standard ruleset");
+        let mut defs = *standard.game_defs();
+        defs.underworld_levels = 3;
+        defs.underdeep_levels = 0;
+
+        assert_eq!(scales(&defs, 1), (1, 1));
+        assert_eq!(scales(&defs, 2), (1, 2));
+        assert_eq!(scales(&defs, 3), (2, 2));
+        assert_eq!(scales(&defs, 4), (2, 4));
+        assert_eq!(scales(&defs, 5), (1, 1));
+
+        defs.underworld_levels = 2;
+        defs.underdeep_levels = 2;
+        assert_eq!(scales(&defs, 2), (1, 2));
+        assert_eq!(scales(&defs, 3), (2, 4));
+        assert_eq!(scales(&defs, 4), (2, 4));
+        assert_eq!(scales(&defs, 5), (4, 4));
+        assert_eq!(scales(&defs, 6), (1, 1));
+    }
 }
