@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::Tables;
 
@@ -13,7 +13,7 @@ pub const MAX_WEAPON_BONUS_TARGETS: usize = 4;
 
 macro_rules! item_id_enum {
     ($($variant:ident),+ $(,)?) => {
-        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
         #[repr(usize)]
         pub enum ItemId {
             $($variant),+
