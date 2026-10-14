@@ -94,12 +94,13 @@ impl Default for Faction {
 
 impl Faction {
     pub fn with_faction_types(faction_types: &[&str]) -> Self {
-        let mut faction = Self::default();
-        faction.faction_types = faction_types
-            .iter()
-            .map(|faction_type| ((*faction_type).to_owned(), 1))
-            .collect();
-        faction
+        Self {
+            faction_types: faction_types
+                .iter()
+                .map(|faction_type| ((*faction_type).to_owned(), 1))
+                .collect(),
+            ..Self::default()
+        }
     }
 
     pub fn new(number: i32, faction_types: &[&str]) -> Self {
@@ -133,25 +134,13 @@ pub struct Attitude {
     pub attitude: i32,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TownInfo {
     pub name: Option<String>,
     pub population: i32,
     pub activity: i32,
     pub habitat: i32,
     pub development: i32,
-}
-
-impl Default for TownInfo {
-    fn default() -> Self {
-        Self {
-            name: None,
-            population: 0,
-            activity: 0,
-            habitat: 0,
-            development: 0,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

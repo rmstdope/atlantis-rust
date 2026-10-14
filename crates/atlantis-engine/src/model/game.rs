@@ -416,7 +416,7 @@ impl Game {
         let reusable = (1..self.unit_seq).find(|number| {
             self.unit_numbers
                 .get(*number as usize)
-                .map_or(true, |id| id.is_none())
+                .is_none_or(|id| id.is_none())
         });
         let number = reusable.unwrap_or(self.unit_seq);
         let next_seq = if reusable.is_some() {
