@@ -1262,7 +1262,7 @@ mod tests {
                 y: 0,
                 gate: 4,
                 gate_month: Some(11),
-                object_count: 2,
+                object_count: 3,
             },
         );
         append_object(
@@ -1279,6 +1279,18 @@ mod tests {
             "Second object",
             &[],
         );
+        append_object(
+            &mut input,
+            4,
+            tables.objects[crate::defs::objects::O_FLEET].name,
+            "Fleet",
+            &[],
+        );
+        let longboat = tables.item_families.items[ItemId::Longboat.index()]
+            .abbreviation
+            .as_deref()
+            .expect("longboat abbreviation");
+        input.push_str(&format!("1\n3 {longboat}\n"));
         append_region(
             &mut input,
             TestRegion {
@@ -1310,14 +1322,14 @@ mod tests {
         assert_eq!((second.gate, second.gate_month), (0, 0));
         assert_eq!(first.neighbors[0], Some(region_ids[1]));
         assert_eq!(second.neighbors[0], Some(region_ids[0]));
-        assert_eq!(first.object_ids().len(), 2);
+        assert_eq!(first.object_ids().len(), 3);
         assert_eq!(
             first
                 .object_ids()
                 .iter()
                 .map(|id| game.object(*id).unwrap().num)
                 .collect::<Vec<_>>(),
-            [9, 2]
+            [9, 2, 4]
         );
 
         let object = game.object(first.object_ids()[0]).unwrap();
@@ -1329,6 +1341,17 @@ mod tests {
                 .map(|id| game.unit(*id).unwrap().num)
                 .collect::<Vec<_>>(),
             [50, 3]
+        );
+
+        let fleet = game.object(first.object_ids()[2]).unwrap();
+        assert_eq!(
+            fleet
+                .ships
+                .entries()
+                .iter()
+                .map(|ship| (ship.item_type, ship.num))
+                .collect::<Vec<_>>(),
+            [(ItemId::Longboat, 3)]
         );
     }
 
