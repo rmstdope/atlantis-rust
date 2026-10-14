@@ -9,10 +9,12 @@ use crate::model::{Faction, FactionId, Game, ModelError, ObjectId, UnitId, UnitT
 use crate::ruleset::Ruleset;
 use crate::text::{get_at, get_token, is_equal, value, TextInput};
 
-use super::{parse_order_verb, OrderVerb, TurnOrder};
+use super::{parse_order_verb, MoveDir, MoveOrder, OrderData, OrderVerb, SailOrder, TurnOrder};
 
 const FLAG_AUTOTAX: i32 = 0x0004;
 const TAX_AUTO: i32 = 3;
+const TAX_TAX: i32 = 1;
+const TAX_PILLAGE: i32 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OrderParseMode {
@@ -244,7 +246,7 @@ impl<'a> Parser<'a> {
                 Ok(())
             }
             _ => {
-                self.dispatch_order(&token, verb, &raw_line, at_sign);
+                self.dispatch_order(&token, verb, &mut line, &raw_line, at_sign);
                 Ok(())
             }
         }?;
@@ -713,6 +715,7 @@ impl<'a> Parser<'a> {
         &mut self,
         token: &str,
         verb: Option<OrderVerb>,
+        line: &mut String,
         raw_line: &str,
         at_sign: bool,
     ) {
@@ -742,6 +745,126 @@ impl<'a> Parser<'a> {
         }
         if self.mode == OrderParseMode::Turn {
             self.store_old_order(raw_line, at_sign, true);
+        }
+
+        if let Some(verb @ (OrderVerb::Move | OrderVerb::Advance | OrderVerb::Sail)) = verb {
+            self.parse_movement_order(unit_id, verb, line);
+        }
+    }
+
+    /// C++: `parseorders.cpp` `Game::ProcessAdvanceOrder`, `ProcessMoveOrder`, and `ProcessSailOrder`.
+    fn parse_movement_order(&mut self, unit_id: UnitId, verb: OrderVerb, line: &mut String) {
+        let (has_other_month_order, in_turn_block, is_taxing) = self
+            .game
+            .unit(unit_id)
+            .map(|unit| {
+                let has_other_month_order =
+                    unit.orders
+                        .month_orders
+                        .as_ref()
+                        .is_some_and(|order| match order {
+                            OrderData::Move(order) => order.order.kind != verb,
+                            OrderData::Sail(order) => order.order.kind != verb,
+                            _ => true,
+                        });
+                (
+                    has_other_month_order,
+                    unit.orders.in_turn_block != 0,
+                    matches!(unit.taxing, TAX_TAX | TAX_PILLAGE),
+                )
+            })
+            .unwrap_or((false, false, false));
+        let overwrite =
+            has_other_month_order || (self.defs.tax_pillage_month_long != 0 && is_taxing);
+
+        if overwrite {
+            let delayed = if in_turn_block { "DELAYED " } else { "" };
+            let message = match verb {
+                OrderVerb::Advance => {
+                    format!("ADVANCE: Overwriting previous {delayed}month-long orders")
+                }
+                OrderVerb::Move => {
+                    format!("MOVE: Overwriting previous {delayed}month-long order.")
+                }
+                OrderVerb::Sail => {
+                    format!("SAIL: Overwriting previous {delayed}month-long order.")
+                }
+                _ => return,
+            };
+            self.record_unit_error(unit_id, &message);
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                unit.orders.month_orders = None;
+            }
+        }
+
+        let mut order_data = self
+            .game
+            .unit_mut(unit_id)
+            .and_then(|unit| unit.orders.month_orders.take());
+        if self.defs.tax_pillage_month_long != 0 {
+            if let Some(unit) = self.game.unit_mut(unit_id) {
+                unit.taxing = 0;
+            }
+        }
+
+        match verb {
+            OrderVerb::Move | OrderVerb::Advance => {
+                let mut order = match order_data.take() {
+                    Some(OrderData::Move(order)) if order.order.kind == verb => order,
+                    _ => MoveOrder {
+                        order: super::Order::new(verb),
+                        advancing: i32::from(verb == OrderVerb::Advance),
+                        ..MoveOrder::default()
+                    },
+                };
+                order.advancing = i32::from(verb == OrderVerb::Advance);
+
+                while let Some(token) = get_token(line) {
+                    let Some(direction) = parse_dir(&token) else {
+                        self.record_unit_error(
+                            unit_id,
+                            if verb == OrderVerb::Advance {
+                                "ADVANCE: Warning, bad direction."
+                            } else {
+                                "MOVE: Warning, bad direction."
+                            },
+                        );
+                        break;
+                    };
+                    if self.mode == OrderParseMode::Turn {
+                        order.dirs.push(MoveDir { dir: direction });
+                    }
+                }
+                if let Some(unit) = self.game.unit_mut(unit_id) {
+                    unit.orders.month_orders = Some(OrderData::Move(order));
+                }
+            }
+            OrderVerb::Sail => {
+                let mut order = match order_data.take() {
+                    Some(OrderData::Sail(order)) if order.order.kind == OrderVerb::Sail => order,
+                    _ => SailOrder::default(),
+                };
+
+                while let Some(token) = get_token(line) {
+                    let Some(direction) = parse_dir(&token) else {
+                        self.record_unit_error(unit_id, "SAIL: Warning, bad direction.");
+                        break;
+                    };
+                    if direction >= crate::defs::strings::DIRECTION_NAMES.len() as i32
+                        && direction != super::MOVE_PAUSE
+                    {
+                        self.record_unit_error(unit_id, "SAIL: Warning, bad direction.");
+                        break;
+                    }
+                    if self.mode == OrderParseMode::Turn {
+                        order.dirs.push(MoveDir { dir: direction });
+                    }
+                }
+                if let Some(unit) = self.game.unit_mut(unit_id) {
+                    unit.orders.month_orders = Some(OrderData::Sail(order));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -898,6 +1021,30 @@ impl<'a> Parser<'a> {
             });
         }
     }
+}
+
+/// C++: `parseorders.cpp` `Game::ParseDir`.
+fn parse_dir(token: &str) -> Option<i32> {
+    for (index, (name, abbreviation)) in crate::defs::strings::DIRECTION_NAMES
+        .iter()
+        .zip(crate::defs::strings::DIRECTION_ABBREVIATIONS)
+        .enumerate()
+    {
+        if is_equal(token, name) || is_equal(token, abbreviation) {
+            return Some(index as i32);
+        }
+    }
+    if is_equal(token, "in") {
+        return Some(super::MOVE_IN);
+    }
+    if is_equal(token, "out") {
+        return Some(super::MOVE_OUT);
+    }
+    if is_equal(token, "pause") || is_equal(token, "p") {
+        return Some(super::MOVE_PAUSE);
+    }
+    let number = value(token);
+    (number != 0).then_some(super::MOVE_ENTER.wrapping_add(number))
 }
 
 fn faction_is_npc(faction: &Faction) -> bool {
@@ -1182,7 +1329,10 @@ mod tests {
     use super::{parse_order_file, OrderParseMode};
     use crate::defs::ItemId;
     use crate::model::{Faction, Game, Object, Region, Unit};
-    use crate::orders::{OrderData, TurnOrder};
+    use crate::orders::{
+        MoveDir, MoveOrder, OrderData, OrderVerb, TurnOrder, MOVE_ENTER, MOVE_IN, MOVE_OUT,
+        MOVE_PAUSE,
+    };
     use crate::ruleset::Ruleset;
 
     #[test]
@@ -1623,6 +1773,250 @@ mod tests {
         assert_eq!(errors.len(), 1002);
         assert_eq!(errors[1000], "Unit (10): unknown is not a valid order.");
         assert_eq!(errors[1001], "Too many errors!");
+    }
+
+    #[test]
+    fn parse_dir_accepts_names_abbreviations_controls_and_object_numbers() {
+        let (mut game, faction_id, _, unit_id) = game_with_unit();
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let result = parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nmove North n nOrThEaSt NE Southeast SE South s Southwest SW Northwest NW 12tail in out pause p\nmove 0 north\nmove northeast\nmove invalid south\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        let Some(OrderData::Move(order)) = &game.unit(unit_id).unwrap().orders.month_orders else {
+            panic!("expected MOVE order");
+        };
+        assert_eq!(order.order.kind, OrderVerb::Move);
+        assert_eq!(
+            order.dirs,
+            [
+                0,
+                0,
+                1,
+                1,
+                2,
+                2,
+                3,
+                3,
+                4,
+                4,
+                5,
+                5,
+                MOVE_ENTER + 12,
+                MOVE_IN,
+                MOVE_OUT,
+                MOVE_PAUSE,
+                MOVE_PAUSE,
+                1,
+            ]
+            .map(|dir| MoveDir { dir })
+        );
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            [
+                "Unit (10): MOVE: Warning, bad direction.",
+                "Unit (10): MOVE: Warning, bad direction."
+            ]
+        );
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn move_advance_and_sail_parse_accepted_and_rejected_directions() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let (mut advance_game, advance_faction, _, advance_unit) = game_with_unit();
+        parse_order_file(
+            &mut advance_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nadvance north 2 in out p invalid northwest\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        let Some(OrderData::Move(advance)) =
+            &advance_game.unit(advance_unit).unwrap().orders.month_orders
+        else {
+            panic!("expected ADVANCE order");
+        };
+        assert_eq!(advance.order.kind, OrderVerb::Advance);
+        assert_eq!(advance.advancing, 1);
+        assert_eq!(
+            advance.dirs,
+            [0, MOVE_ENTER + 2, MOVE_IN, MOVE_OUT, MOVE_PAUSE].map(|dir| MoveDir { dir })
+        );
+        assert_eq!(
+            advance_game.faction(advance_faction).unwrap().errors,
+            ["Unit (10): ADVANCE: Warning, bad direction."]
+        );
+
+        let (mut sail_game, sail_faction, _, sail_unit) = game_with_unit();
+        parse_order_file(
+            &mut sail_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nsail north NE SE south SW northwest p in south\nsail out\nsail 12\nsail invalid\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        let Some(OrderData::Sail(sail)) = &sail_game.unit(sail_unit).unwrap().orders.month_orders
+        else {
+            panic!("expected SAIL order");
+        };
+        assert_eq!(
+            sail.dirs,
+            [0, 1, 2, 3, 4, 5, MOVE_PAUSE].map(|dir| MoveDir { dir })
+        );
+        assert_eq!(
+            sail_game.faction(sail_faction).unwrap().errors,
+            [
+                "Unit (10): SAIL: Warning, bad direction.",
+                "Unit (10): SAIL: Warning, bad direction.",
+                "Unit (10): SAIL: Warning, bad direction.",
+                "Unit (10): SAIL: Warning, bad direction."
+            ]
+        );
+
+        let (mut check_game, check_faction, _, check_unit) = game_with_unit();
+        let mut parser =
+            super::Parser::new(&mut check_game, ruleset.game_defs(), OrderParseMode::Check);
+        parser.faction_id = Some(check_faction);
+        parser.unit_stack.push(check_unit);
+        let mut cursor = 0;
+        let mut pending = std::collections::VecDeque::new();
+        parser
+            .parse_line("move north".to_owned(), &[], &mut cursor, &mut pending)
+            .unwrap();
+        assert!(matches!(
+            &parser.game.unit(check_unit).unwrap().orders.month_orders,
+            Some(OrderData::Move(order)) if order.dirs.is_empty()
+        ));
+    }
+
+    #[test]
+    fn movement_orders_append_and_overwrite_with_original_errors() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+
+        let (mut move_game, move_faction, _, move_unit) = game_with_unit();
+        parse_order_file(
+            &mut move_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nmove north\nmove NE\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        let Some(OrderData::Move(move_order)) =
+            &move_game.unit(move_unit).unwrap().orders.month_orders
+        else {
+            panic!("expected MOVE order");
+        };
+        assert_eq!(move_order.dirs, [0, 1].map(|dir| MoveDir { dir }));
+        assert!(move_game.faction(move_faction).unwrap().errors.is_empty());
+
+        let (mut advance_game, advance_faction, _, advance_unit) = game_with_unit();
+        parse_order_file(
+            &mut advance_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nadvance north\nadvance south\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        let Some(OrderData::Move(advance_order)) =
+            &advance_game.unit(advance_unit).unwrap().orders.month_orders
+        else {
+            panic!("expected ADVANCE order");
+        };
+        assert_eq!(advance_order.advancing, 1);
+        assert_eq!(advance_order.dirs, [0, 3].map(|dir| MoveDir { dir }));
+        assert!(advance_game
+            .faction(advance_faction)
+            .unwrap()
+            .errors
+            .is_empty());
+
+        let (mut sail_game, sail_faction, _, sail_unit) = game_with_unit();
+        parse_order_file(
+            &mut sail_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nsail north\nsail south\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        let Some(OrderData::Sail(sail_order)) =
+            &sail_game.unit(sail_unit).unwrap().orders.month_orders
+        else {
+            panic!("expected SAIL order");
+        };
+        assert_eq!(sail_order.dirs, [0, 3].map(|dir| MoveDir { dir }));
+        assert!(sail_game.faction(sail_faction).unwrap().errors.is_empty());
+
+        let (mut overwrite_game, overwrite_faction, _, overwrite_unit) = game_with_unit();
+        parse_order_file(
+            &mut overwrite_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nmove north\nadvance south\nsail northwest\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert!(matches!(
+            &overwrite_game
+                .unit(overwrite_unit)
+                .unwrap()
+                .orders
+                .month_orders,
+            Some(OrderData::Sail(order)) if order.dirs == [MoveDir { dir: 5 }]
+        ));
+        assert_eq!(
+            overwrite_game.faction(overwrite_faction).unwrap().errors,
+            [
+                "Unit (10): ADVANCE: Overwriting previous month-long orders",
+                "Unit (10): SAIL: Overwriting previous month-long order."
+            ]
+        );
+
+        let (mut delayed_game, delayed_faction, _, delayed_unit) = game_with_unit();
+        delayed_game
+            .unit_mut(delayed_unit)
+            .unwrap()
+            .orders
+            .month_orders = Some(OrderData::Move(MoveOrder::default()));
+        delayed_game
+            .unit_mut(delayed_unit)
+            .unwrap()
+            .orders
+            .in_turn_block = 1;
+        let mut parser =
+            super::Parser::new(&mut delayed_game, ruleset.game_defs(), OrderParseMode::Turn);
+        parser.faction_id = Some(delayed_faction);
+        parser.unit_stack.push(delayed_unit);
+        let mut cursor = 0;
+        let mut pending = std::collections::VecDeque::new();
+        parser
+            .parse_line("sail north".to_owned(), &[], &mut cursor, &mut pending)
+            .unwrap();
+        assert_eq!(
+            parser.game.faction(delayed_faction).unwrap().errors,
+            ["Unit (10): SAIL: Overwriting previous DELAYED month-long order."]
+        );
+
+        let mut defs = *ruleset.game_defs();
+        defs.tax_pillage_month_long = 1;
+        let (mut taxed_game, taxed_faction, _, taxed_unit) = game_with_unit();
+        let mut parser = super::Parser::new(&mut taxed_game, &defs, OrderParseMode::Turn);
+        parser.faction_id = Some(taxed_faction);
+        parser.unit_stack.push(taxed_unit);
+        parser.game.unit_mut(taxed_unit).unwrap().taxing = 1;
+        let mut cursor = 0;
+        let mut pending = std::collections::VecDeque::new();
+        parser
+            .parse_line("move north".to_owned(), &[], &mut cursor, &mut pending)
+            .unwrap();
+        assert_eq!(parser.game.unit(taxed_unit).unwrap().taxing, 0);
+        assert_eq!(
+            parser.game.faction(taxed_faction).unwrap().errors,
+            ["Unit (10): MOVE: Overwriting previous month-long order."]
+        );
     }
 
     fn game_with_unit() -> (
