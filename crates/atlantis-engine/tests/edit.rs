@@ -1,5 +1,9 @@
 use atlantis_engine::{
-    defs::{objects::O_TOWER, terrains::R_FOREST, ItemFlags, ItemId, ItemTypeFlags},
+    defs::{
+        objects::O_TOWER,
+        terrains::{R_FOREST, R_PLAIN},
+        ItemFlags, ItemId, ItemTypeFlags,
+    },
     edit::{
         add_or_regenerate_town, add_region_gate, add_region_object, create_unit, find_region,
         find_unit, move_unit_to_region, regenerate_markets, regenerate_region,
@@ -7,9 +11,11 @@ use atlantis_engine::{
         remove_town, rename_region, rename_region_object, rename_town, rename_unit,
         set_market_amount_range, set_market_population_range, set_market_prices, set_region_race,
         set_region_terrain, set_region_wages, set_unit_description, set_unit_faction,
-        set_unit_guard, set_unit_item, set_unit_skill, set_unit_type, swap_market_type,
+        set_unit_guard, set_unit_item, set_unit_skill, set_unit_type, swap_market_type, EditError,
     },
-    model::{Game, GuardMode, MarketType, Object, ObjectId, RegionId, Unit, UnitId, UnitType},
+    model::{
+        Game, GuardMode, MarketType, Object, ObjectId, Region, RegionId, Unit, UnitId, UnitType,
+    },
     save::{load_legacy, save_legacy, LoadedGame},
 };
 
@@ -373,6 +379,39 @@ fn market_edits_update_swap_and_remove_matching_items() {
 }
 
 #[test]
+fn market_amount_overflow_is_rejected_without_mutation_or_rng_draws() {
+    let mut loaded = loaded_game();
+    let mut expected_rng = loaded_game();
+    let region_id = first_populated_region(&loaded.game);
+    let before = loaded.game.clone();
+
+    let result =
+        set_market_amount_range(&mut loaded, region_id, ItemId::Wood, i32::MAX - 1, i32::MAX);
+
+    assert_eq!(result, Err(EditError::MarketAmountOverflow));
+    assert_eq!(loaded.game, before);
+    assert_eq!(loaded.rng.get_random(100), expected_rng.rng.get_random(100));
+}
+
+#[test]
+fn existing_market_amount_overflow_is_rejected_without_mutation() {
+    let mut loaded = loaded_game();
+    let mut expected_rng = loaded_game();
+    let region_id = first_populated_region(&loaded.game);
+    for game in [&mut loaded, &mut expected_rng] {
+        set_market_population_range(game, region_id, ItemId::Wood, 0, i32::MAX)
+            .expect("create wide population range");
+    }
+    let before = loaded.game.clone();
+
+    let result = set_market_amount_range(&mut loaded, region_id, ItemId::Wood, 0, i32::MAX);
+
+    assert_eq!(result, Err(EditError::MarketAmountOverflow));
+    assert_eq!(loaded.game, before);
+    assert_eq!(loaded.rng.get_random(100), expected_rng.rng.get_random(100));
+}
+
+#[test]
 fn market_regeneration_rebuilds_a_town_market_deterministically() {
     let mut first = loaded_game();
     let mut second = loaded_game();
@@ -514,5 +553,112 @@ fn edits_round_trip_with_neworigins_tables_and_legacy_save() {
             .items
             .get_num(item),
         4
+    );
+}
+
+#[test]
+fn failed_regenerations_leave_game_and_rng_unchanged() {
+    let mut loaded = loaded_game();
+    let mut expected_rng = loaded_game();
+    let region_id = first_populated_region(&loaded.game);
+    loaded.game.region_mut(region_id).unwrap().terrain_type = Some(usize::MAX);
+    expected_rng
+        .game
+        .region_mut(region_id)
+        .unwrap()
+        .terrain_type = Some(usize::MAX);
+    let before = loaded.game.clone();
+
+    assert!(regenerate_region(&mut loaded, region_id).is_err());
+    assert_eq!(loaded.game, before);
+    assert_eq!(loaded.rng.get_random(100), expected_rng.rng.get_random(100));
+
+    let mut loaded = loaded_game();
+    let mut expected_rng = loaded_game();
+    let region_id = first_populated_region(&loaded.game);
+    add_or_regenerate_town(&mut loaded, region_id).expect("prepare town");
+    add_or_regenerate_town(&mut expected_rng, region_id).expect("prepare expected town");
+    loaded.game.region_mut(region_id).unwrap().terrain_type = Some(usize::MAX);
+    expected_rng
+        .game
+        .region_mut(region_id)
+        .unwrap()
+        .terrain_type = Some(usize::MAX);
+    let before = loaded.game.clone();
+
+    assert!(regenerate_markets(&mut loaded, region_id).is_err());
+    assert_eq!(loaded.game, before);
+    assert_eq!(loaded.rng.get_random(100), expected_rng.rng.get_random(100));
+
+    let mut loaded = loaded_game();
+    let mut expected_rng = loaded_game();
+    let region_id = first_populated_region(&loaded.game);
+    loaded.game.region_mut(region_id).unwrap().terrain_type = Some(usize::MAX);
+    expected_rng
+        .game
+        .region_mut(region_id)
+        .unwrap()
+        .terrain_type = Some(usize::MAX);
+    let before = loaded.game.clone();
+
+    assert!(add_or_regenerate_town(&mut loaded, region_id).is_err());
+    assert_eq!(loaded.game, before);
+    assert_eq!(loaded.rng.get_random(100), expected_rng.rng.get_random(100));
+}
+
+#[test]
+fn town_habitat_preserves_the_original_food_item_flags_check() {
+    let mut with_farm = loaded_game();
+    let mut without_farm = loaded_game();
+    let farm_type = with_farm
+        .ruleset
+        .tables()
+        .objects
+        .iter()
+        .position(|object| object.name == "Farm")
+        .expect("ruleset has a farm object");
+    let production_aided =
+        usize::try_from(with_farm.ruleset.tables().objects[farm_type].production_aided)
+            .expect("farm aids a valid item");
+    let grain = &with_farm.ruleset.tables().item_families.items[production_aided];
+    assert_ne!(grain.item_type & ItemTypeFlags::FOOD, 0);
+    assert_eq!(grain.flags & ItemTypeFlags::FOOD, 0);
+
+    let mut test_region = Region::default();
+    test_region.terrain_type = Some(R_PLAIN);
+    test_region.race = ItemId::Plainsman as i32;
+    test_region.habitat = 1000;
+    test_region.population = 1000;
+    test_region.base_population = 1000;
+    test_region.development = 0;
+    let with_farm_region = with_farm.game.add_region(test_region.clone());
+    let without_farm_region = without_farm.game.add_region(test_region);
+    let mut farm = Object::default();
+    farm.object_type = farm_type as i32;
+    with_farm
+        .game
+        .add_object(with_farm_region, farm)
+        .expect("add farm building");
+
+    add_or_regenerate_town(&mut with_farm, with_farm_region).expect("add town with farm");
+    add_or_regenerate_town(&mut without_farm, without_farm_region).expect("add town without farm");
+
+    assert_eq!(
+        with_farm
+            .game
+            .region(with_farm_region)
+            .unwrap()
+            .town
+            .as_ref()
+            .unwrap()
+            .habitat,
+        without_farm
+            .game
+            .region(without_farm_region)
+            .unwrap()
+            .town
+            .as_ref()
+            .unwrap()
+            .habitat
     );
 }

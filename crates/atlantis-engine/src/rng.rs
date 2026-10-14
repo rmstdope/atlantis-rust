@@ -28,7 +28,7 @@ mod rng_words {
 }
 
 /// Per-instance LP64 ISAAC state used by the original Atlantis engine.
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct Rng {
     randcnt: u64,
     #[serde(with = "rng_words")]

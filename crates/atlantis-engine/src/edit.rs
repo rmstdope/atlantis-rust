@@ -22,6 +22,7 @@ pub enum EditError {
     InvalidMarketItem(ItemId),
     InvalidObjectIndex(usize),
     InvalidMarketRange,
+    MarketAmountOverflow,
     InvalidMarketPrice,
     MarketNotFound(ItemId),
     InvalidUnitItem(ItemId),
@@ -64,6 +65,9 @@ impl fmt::Display for EditError {
             }
             Self::InvalidMarketRange => {
                 formatter.write_str("market minimum must be less than maximum")
+            }
+            Self::MarketAmountOverflow => {
+                formatter.write_str("market amount arithmetic exceeds the supported range")
             }
             Self::InvalidMarketPrice => {
                 formatter.write_str("market prices must be greater than zero")
@@ -499,13 +503,14 @@ pub fn set_region_race(
             return Err(EditError::InvalidRace(race));
         }
     }
-    loaded
-        .game
-        .region_mut(region_id)
-        .ok_or(EditError::Model(ModelError::MissingRegion(region_id)))?
-        .race = race.map_or(-1, |race| race as i32);
-    refresh_region_edit_state(loaded, region_id)?;
-    Ok(())
+    transactional_edit(loaded, |staged| {
+        staged
+            .game
+            .region_mut(region_id)
+            .ok_or(EditError::Model(ModelError::MissingRegion(region_id)))?
+            .race = race.map_or(-1, |race| race as i32);
+        refresh_region_edit_state(staged, region_id)
+    })
 }
 
 /// C++: `edit.cpp` `EditGameRegionTerrain`; the editor's `n` operation replaces the name.
@@ -531,17 +536,18 @@ pub fn set_region_wages(
     region_id: RegionId,
     maximum: i32,
 ) -> Result<(), EditError> {
-    let region = loaded
-        .game
-        .region_mut(region_id)
-        .ok_or(EditError::Model(ModelError::MissingRegion(region_id)))?;
-    if maximum != 0 {
-        let change = maximum - region.max_wages;
-        region.max_wages = maximum;
-        region.wages += change;
-    }
-    refresh_region_edit_state(loaded, region_id)?;
-    Ok(())
+    transactional_edit(loaded, |staged| {
+        let region = staged
+            .game
+            .region_mut(region_id)
+            .ok_or(EditError::Model(ModelError::MissingRegion(region_id)))?;
+        if maximum != 0 {
+            let change = maximum - region.max_wages;
+            region.max_wages = maximum;
+            region.wages += change;
+        }
+        refresh_region_edit_state(staged, region_id)
+    })
 }
 
 /// C++: `edit.cpp` `EditGameRegionTerrain` and `economy.cpp` `ARegion::SetupProds`.
@@ -620,6 +626,10 @@ pub fn regenerate_region_products(
 
 /// C++: `edit.cpp` `g`; regenerates products, population, development, town, and markets.
 pub fn regenerate_region(loaded: &mut LoadedGame, region_id: RegionId) -> Result<(), EditError> {
+    transactional_edit(loaded, |staged| regenerate_region_inner(staged, region_id))
+}
+
+fn regenerate_region_inner(loaded: &mut LoadedGame, region_id: RegionId) -> Result<(), EditError> {
     let region = loaded
         .game
         .region_mut(region_id)
@@ -693,11 +703,7 @@ fn setup_edit_region(loaded: &mut LoadedGame, region_id: RegionId) -> Result<(),
         }
     }
     region.habitat = region.habitat * 2 / 3 + loaded.rng.get_random(region.habitat / 3);
-    if is_native_race(region.race, &terrain, coastal) {
-        region.habitat = region.habitat * 9 / 8;
-    } else {
-        region.habitat = region.habitat * 4 / 5;
-    }
+    region.habitat = adjust_region_habitat(region.habitat, region.race, &terrain, coastal, &tables);
     region.base_population = region.habitat / 3;
     region.population =
         region.habitat * (60 + loaded.rng.get_random(6) + loaded.rng.get_random(6)) / 100;
@@ -779,6 +785,35 @@ fn is_native_race(race: i32, terrain: &crate::defs::TerrainDef, coastal: bool) -
     terrain.races.contains(&race) || (coastal && terrain.coastal_races.contains(&race))
 }
 
+/// C++: `edit.cpp` applies the home-terrain bonus separately from the non-native penalty.
+fn adjust_region_habitat(
+    mut habitat: i32,
+    race: i32,
+    terrain: &crate::defs::TerrainDef,
+    coastal: bool,
+    tables: &crate::defs::RulesetTables,
+) -> i32 {
+    let home_terrain = usize::try_from(race)
+        .ok()
+        .and_then(|race| tables.item_families.items.get(race))
+        .and_then(|item| item.abbreviation.as_deref())
+        .and_then(|abbreviation| {
+            tables
+                .item_families
+                .races
+                .iter()
+                .find(|race| race.abbreviation.as_deref() == Some(abbreviation))
+        })
+        .map(|race| race.terrain);
+    if home_terrain == Some(terrain.similar_type) {
+        habitat = habitat * 9 / 8;
+    }
+    if !is_native_race(race, terrain, coastal) {
+        habitat = habitat * 4 / 5;
+    }
+    habitat
+}
+
 fn pole_distance(game: &Game, region: &Region, direction: usize) -> i32 {
     let mut distance = 1;
     let mut next = region.neighbors[direction];
@@ -803,29 +838,35 @@ pub fn set_market_population_range(
     if minimum >= maximum {
         return Err(EditError::InvalidMarketRange);
     }
-    let population = region_population(
-        loaded
+    let region = loaded
+        .game
+        .region(region_id)
+        .expect("region was validated above");
+    let population = checked_market_region_population(region)?;
+    let updated_amounts = region
+        .markets
+        .iter()
+        .enumerate()
+        .filter(|(_, market)| market.item == item as i32)
+        .map(|(index, market)| {
+            let mut updated = market.clone();
+            updated.min_population = minimum;
+            updated.max_population = maximum;
+            Ok((index, market_amount(&updated, population)?))
+        })
+        .collect::<Result<Vec<_>, EditError>>()?;
+    if !updated_amounts.is_empty() {
+        let region = loaded
             .game
-            .region(region_id)
-            .expect("region was validated above"),
-    );
-    if let Some(region) = loaded.game.region_mut(region_id) {
-        if region
-            .markets
-            .iter()
-            .any(|market| market.item == item as i32)
-        {
-            for market in region
-                .markets
-                .iter_mut()
-                .filter(|market| market.item == item as i32)
-            {
-                market.min_population = minimum;
-                market.max_population = maximum;
-                market.amount = market_amount(market, population);
-            }
-            return Ok(());
+            .region_mut(region_id)
+            .expect("region was validated above");
+        for (index, amount) in updated_amounts {
+            let market = &mut region.markets[index];
+            market.min_population = minimum;
+            market.max_population = maximum;
+            market.amount = amount;
         }
+        return Ok(());
     }
     let tables = loaded.ruleset.tables();
     let base = tables.item_families.items[item.index()].base_price;
@@ -860,34 +901,46 @@ pub fn set_market_amount_range(
     if minimum >= maximum {
         return Err(EditError::InvalidMarketRange);
     }
-    let population = region_population(
-        loaded
+    let region = loaded
+        .game
+        .region(region_id)
+        .expect("region was validated above");
+    let population = checked_market_region_population(region)?;
+    let updated_amounts = region
+        .markets
+        .iter()
+        .enumerate()
+        .filter(|(_, market)| market.item == item as i32)
+        .map(|(index, market)| {
+            let mut updated = market.clone();
+            updated.min_amount = minimum;
+            updated.max_amount = maximum;
+            Ok((index, market_amount(&updated, population)?))
+        })
+        .collect::<Result<Vec<_>, EditError>>()?;
+    if !updated_amounts.is_empty() {
+        let region = loaded
             .game
-            .region(region_id)
-            .expect("region was validated above"),
-    );
-    if let Some(region) = loaded.game.region_mut(region_id) {
-        if region
-            .markets
-            .iter()
-            .any(|market| market.item == item as i32)
-        {
-            for market in region
-                .markets
-                .iter_mut()
-                .filter(|market| market.item == item as i32)
-            {
-                market.min_amount = minimum;
-                market.max_amount = maximum;
-                market.amount = market_amount(market, population);
-            }
-            return Ok(());
+            .region_mut(region_id)
+            .expect("region was validated above");
+        for (index, amount) in updated_amounts {
+            let market = &mut region.markets[index];
+            market.min_amount = minimum;
+            market.max_amount = maximum;
+            market.amount = amount;
         }
+        return Ok(());
     }
+    let scaled_amount = maximum
+        .checked_mul(population)
+        .ok_or(EditError::MarketAmountOverflow)?
+        / 5000;
+    let amount = minimum
+        .checked_add(scaled_amount)
+        .ok_or(EditError::MarketAmountOverflow)?;
     let tables = loaded.ruleset.tables();
     let base = tables.item_families.items[item.index()].base_price;
     let price = (base * (100 + loaded.rng.get_random(50))) / 100;
-    let amount = minimum + maximum * population / 5000;
     let mut market = Market {
         market_type: MarketType::Sell,
         item: item as i32,
@@ -1022,16 +1075,39 @@ fn item_enabled(tables: &crate::defs::RulesetTables, item: usize) -> bool {
         .is_some_and(|definition| definition.flags & ItemFlags::DISABLED == 0)
 }
 
-fn market_amount(market: &Market, population: i32) -> i32 {
+fn market_amount(market: &Market, population: i32) -> Result<i32, EditError> {
     if population <= market.min_population {
-        market.min_amount
+        Ok(market.min_amount)
     } else if population >= market.max_population {
-        market.max_amount
+        Ok(market.max_amount)
     } else {
-        market.min_amount
-            + ((market.max_amount - market.min_amount) * (population - market.min_population))
-                / (market.max_population - market.min_population)
+        let amount_range = market
+            .max_amount
+            .checked_sub(market.min_amount)
+            .ok_or(EditError::MarketAmountOverflow)?;
+        let population_offset = population
+            .checked_sub(market.min_population)
+            .ok_or(EditError::MarketAmountOverflow)?;
+        let population_range = market
+            .max_population
+            .checked_sub(market.min_population)
+            .ok_or(EditError::MarketAmountOverflow)?;
+        let scaled_amount = amount_range
+            .checked_mul(population_offset)
+            .and_then(|amount| amount.checked_div(population_range))
+            .ok_or(EditError::MarketAmountOverflow)?;
+        market
+            .min_amount
+            .checked_add(scaled_amount)
+            .ok_or(EditError::MarketAmountOverflow)
     }
+}
+
+fn checked_market_region_population(region: &Region) -> Result<i32, EditError> {
+    region
+        .population
+        .checked_add(region.town.as_ref().map_or(0, |town| town.population))
+        .ok_or(EditError::MarketAmountOverflow)
 }
 
 fn region_population(region: &Region) -> i32 {
@@ -1087,7 +1163,7 @@ fn refresh_region_edit_state(
     region.wages = calculate_wages(&loaded.game, region_id, &region, defs);
     if region.base_population != 0 {
         region.max_wages = region.wages;
-        let population = region_population(&region);
+        let population = checked_market_region_population(&region)?;
         region.wealth = ((population * (region.wages - 10 * defs.maintenance_cost)) / 50).max(0);
         let rural_population = if population < 3000 {
             let wage_factor = (120 / (61 - population / 50)) as f32;
@@ -1131,7 +1207,7 @@ fn refresh_region_edit_state(
             defs.entertain_income * 10,
         );
     }
-    let population = region_population(&region);
+    let population = checked_market_region_population(&region)?;
     if defs.variable_economy != 0 {
         for market in &mut region.markets {
             let Some(item) = usize::try_from(market.item)
@@ -1162,7 +1238,7 @@ fn refresh_region_edit_state(
                     };
                 }
                 market.price += (target_price - market.price) / 5;
-                market.amount = market_amount(market, population);
+                market.amount = market_amount(market, population)?;
             }
         }
     }
@@ -1534,6 +1610,15 @@ pub fn add_or_regenerate_town(
     loaded: &mut LoadedGame,
     region_id: RegionId,
 ) -> Result<(), EditError> {
+    transactional_edit(loaded, |staged| {
+        add_or_regenerate_town_inner(staged, region_id)
+    })
+}
+
+fn add_or_regenerate_town_inner(
+    loaded: &mut LoadedGame,
+    region_id: RegionId,
+) -> Result<(), EditError> {
     if loaded.ruleset.game_defs().towns_exist == 0 {
         return Err(EditError::TownsDisabled);
     }
@@ -1592,19 +1677,25 @@ pub fn rename_town(
 
 /// C++: `edit.cpp` `deltown`; removes the town and clears its city markets.
 pub fn remove_town(loaded: &mut LoadedGame, region_id: RegionId) -> Result<(), EditError> {
-    let region = loaded
-        .game
-        .region_mut(region_id)
-        .ok_or(EditError::Model(ModelError::MissingRegion(region_id)))?;
-    if region.town.take().is_some() {
-        region.markets.clear();
-        refresh_region_edit_state(loaded, region_id)?;
-    }
-    Ok(())
+    transactional_edit(loaded, |staged| {
+        let region = staged
+            .game
+            .region_mut(region_id)
+            .ok_or(EditError::Model(ModelError::MissingRegion(region_id)))?;
+        if region.town.take().is_some() {
+            region.markets.clear();
+            refresh_region_edit_state(staged, region_id)?;
+        }
+        Ok(())
+    })
 }
 
 /// C++: `economy.cpp` `ARegion::SetupCityMarket`; replaces all markets in a town region.
 pub fn regenerate_markets(loaded: &mut LoadedGame, region_id: RegionId) -> Result<(), EditError> {
+    transactional_edit(loaded, |staged| regenerate_markets_inner(staged, region_id))
+}
+
+fn regenerate_markets_inner(loaded: &mut LoadedGame, region_id: RegionId) -> Result<(), EditError> {
     let region = loaded
         .game
         .region(region_id)
@@ -1621,6 +1712,78 @@ pub fn regenerate_markets(loaded: &mut LoadedGame, region_id: RegionId) -> Resul
     setup_city_market(loaded, region_id)?;
     refresh_region_edit_state(loaded, region_id)?;
     Ok(())
+}
+
+fn transactional_edit(
+    loaded: &mut LoadedGame,
+    operation: impl FnOnce(&mut LoadedGame) -> Result<(), EditError>,
+) -> Result<(), EditError> {
+    let mut staged = loaded.clone();
+    operation(&mut staged)?;
+    *loaded = staged;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::adjust_region_habitat;
+    use crate::defs::{
+        terrains::{R_DESERT, R_PLAIN},
+        ItemId,
+    };
+    use crate::ruleset::Ruleset;
+
+    #[test]
+    fn region_habitat_uses_race_home_and_native_terrain_independently() {
+        let tables = <dyn Ruleset>::from_name("standard")
+            .expect("standard ruleset")
+            .tables();
+        let plains = tables.terrains[R_PLAIN];
+        let nomad = ItemId::Nomad as i32;
+        let plainsman = ItemId::Plainsman as i32;
+
+        assert!(plains.races.contains(&nomad));
+        let nomad_abbreviation = tables.item_families.items[ItemId::Nomad.index()]
+            .abbreviation
+            .as_deref();
+        let nomad_home = tables
+            .item_families
+            .races
+            .iter()
+            .find(|race| race.abbreviation.as_deref() == nomad_abbreviation)
+            .expect("Nomad has a race definition")
+            .terrain;
+        assert_eq!(nomad_home, R_DESERT as i32);
+        assert_eq!(
+            adjust_region_habitat(1000, nomad, &plains, false, &tables),
+            1000
+        );
+
+        let plainsman_abbreviation = tables.item_families.items[ItemId::Plainsman.index()]
+            .abbreviation
+            .as_deref();
+        let plainsman_home = tables
+            .item_families
+            .races
+            .iter()
+            .find(|race| race.abbreviation.as_deref() == plainsman_abbreviation)
+            .expect("Plainsman has a race definition")
+            .terrain;
+        assert_eq!(plainsman_home, plains.similar_type);
+        assert!(plains.races.contains(&plainsman));
+        assert_eq!(
+            adjust_region_habitat(1000, plainsman, &plains, false, &tables),
+            1125
+        );
+
+        let mut nonnative_plains = plains;
+        nonnative_plains.races = [-1; 4];
+        nonnative_plains.coastal_races = [-1; 3];
+        assert_eq!(
+            adjust_region_habitat(1000, plainsman, &nonnative_plains, false, &tables),
+            900
+        );
+    }
 }
 
 fn determine_town_size(loaded: &mut LoadedGame) -> i32 {
