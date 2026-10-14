@@ -596,9 +596,10 @@ mod tests {
     use super::Unit;
     use crate::model::RegionId;
     use crate::orders::{
-        AttackOrder, BuyOrder, CastOrder, ExchangeOrder, FindOrder, ForgetOrder, GiveOrder,
-        JoinOrder, MoveOrder, Order, OrderData, OrderUnitId, SellOrder, StealOrder, TeleportOrder,
-        TransportOrder, TurnOrder, UnitOrders, WithdrawOrder,
+        AssassinateOrder, AttackOrder, BuyOrder, CastOrder, CastOrderData, ExchangeOrder,
+        FindOrder, ForgetOrder, GiveOrder, JoinOrder, MoveOrder, Order, OrderData, OrderUnitId,
+        SellOrder, StealOrderData, TeleportOrder, TransportOrder, TurnOrder, UnitOrders,
+        WithdrawOrder,
     };
 
     #[test]
@@ -631,9 +632,9 @@ mod tests {
                 buy_orders: vec![BuyOrder::default()],
                 sell_orders: vec![SellOrder::default()],
                 forget_orders: vec![ForgetOrder::default()],
-                cast_orders: Some(OrderData::Cast(CastOrder::default())),
-                teleport_orders: Some(OrderData::Teleport(TeleportOrder::default())),
-                steal_orders: Some(OrderData::Steal(StealOrder::default())),
+                cast_orders: Some(CastOrderData::Cast(CastOrder::default())),
+                teleport_orders: Some(TeleportOrder::default()),
+                steal_orders: Some(StealOrderData::Assassinate(AssassinateOrder::default())),
                 month_orders: Some(OrderData::Move(MoveOrder::default())),
                 attack_orders: Some(AttackOrder::default()),
                 evict_orders: Some(crate::orders::EvictOrder::default()),

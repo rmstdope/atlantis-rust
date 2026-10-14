@@ -359,6 +359,14 @@ define_order!(GiveOrder, Give {
     merge: i32 = 0,
     target: Option<OrderUnitId> = None,
 });
+impl GiveOrder {
+    pub fn take() -> Self {
+        Self {
+            order: Order::new(OrderVerb::Take),
+            ..Self::default()
+        }
+    }
+}
 define_order!(
     StudyOrder,
     Study {
@@ -488,6 +496,14 @@ define_order!(TransportOrder, Transport {
     except: i32 = 0,
     target: Option<OrderUnitId> = None,
 });
+impl TransportOrder {
+    pub fn distribute() -> Self {
+        Self {
+            order: Order::new(OrderVerb::Distribute),
+            ..Self::default()
+        }
+    }
+}
 define_order!(JoinOrder, Join {
     target: Option<OrderUnitId> = None,
     overload: i32 = 0,
@@ -528,6 +544,22 @@ pub enum OrderData {
     Join(JoinOrder),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum CastOrderData {
+    Cast(CastOrder),
+    Mind(CastMindOrder),
+    Region(CastRegionOrder),
+    Int(CastIntOrder),
+    Units(CastUnitsOrder),
+    Transmute(CastTransmuteOrder),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum StealOrderData {
+    Steal(StealOrder),
+    Assassinate(AssassinateOrder),
+}
+
 /// C++: `unit.h` per-unit slots; vectors retain `AList` insertion order.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct UnitOrders {
@@ -542,9 +574,9 @@ pub struct UnitOrders {
     pub buy_orders: Vec<BuyOrder>,
     pub sell_orders: Vec<SellOrder>,
     pub forget_orders: Vec<ForgetOrder>,
-    pub cast_orders: Option<OrderData>,
-    pub teleport_orders: Option<OrderData>,
-    pub steal_orders: Option<OrderData>,
+    pub cast_orders: Option<CastOrderData>,
+    pub teleport_orders: Option<TeleportOrder>,
+    pub steal_orders: Option<StealOrderData>,
     pub month_orders: Option<OrderData>,
     pub attack_orders: Option<AttackOrder>,
     pub evict_orders: Option<EvictOrder>,
@@ -797,38 +829,153 @@ mod tests {
         assert_eq!(MoveDir::default().dir, 0);
         assert_eq!(MoveOrder::default().advancing, 0);
         assert!(MoveOrder::default().dirs.is_empty());
+        assert_eq!(
+            OrderUnitId::default(),
+            OrderUnitId {
+                unitnum: 0,
+                alias: 0,
+                faction: 0,
+            }
+        );
         assert_eq!(WithdrawOrder::default().amount, 0);
-        assert_eq!(GiveOrder::default().unfinished, 0);
-        assert_eq!(GiveOrder::default().merge, 0);
-        assert_eq!(StudyOrder::default().level, 0);
+        let withdraw = WithdrawOrder::default();
+        assert_eq!((withdraw.item, withdraw.amount), (0, 0));
+        let give = GiveOrder::default();
+        assert_eq!(
+            (
+                give.item,
+                give.amount,
+                give.except,
+                give.unfinished,
+                give.merge,
+                give.target,
+            ),
+            (0, 0, 0, 0, 0, None)
+        );
+        assert_eq!(GiveOrder::take().order.kind, OrderVerb::Take);
+        let study = StudyOrder::default();
+        assert_eq!((study.skill, study.days, study.level), (0, 0, 0));
         assert!(TeachOrder::default().targets.is_empty());
-        assert_eq!(ProduceOrder::default().skill, -1);
-        assert_eq!(BuyOrder::default().num, 0);
-        assert_eq!(SellOrder::default().num, 0);
+        let produce = ProduceOrder::default();
+        assert_eq!(
+            (
+                produce.item,
+                produce.skill,
+                produce.productivity,
+                produce.target,
+            ),
+            (0, -1, 0, 0)
+        );
+        assert_eq!((BuyOrder::default().item, BuyOrder::default().num), (0, 0));
+        assert_eq!(
+            (SellOrder::default().item, SellOrder::default().num),
+            (0, 0)
+        );
         assert!(AttackOrder::default().targets.is_empty());
-        assert_eq!(BuildOrder::default().new_building, -1);
+        let build = BuildOrder::default();
+        assert_eq!(
+            (build.target, build.new_building, build.needtocomplete),
+            (None, -1, 0)
+        );
         assert!(SailOrder::default().dirs.is_empty());
         assert_eq!(FindOrder::default().find, 0);
-        assert_eq!(StealOrder::default().target, None);
+        let steal = StealOrder::default();
+        assert_eq!((steal.target, steal.item), (None, 0));
         assert_eq!(AssassinateOrder::default().target, None);
         assert_eq!(ForgetOrder::default().skill, 0);
-        assert_eq!(ExchangeOrder::default().exchange_status, -1);
-        assert_eq!(TurnOrder::default().repeating, 0);
-        assert!(TurnOrder::default().turn_orders.is_empty());
-        assert_eq!(CastOrder::default().spell, 0);
-        assert_eq!(CastMindOrder::default().id, None);
-        assert_eq!(CastRegionOrder::default().xloc, 0);
-        assert_eq!(TeleportOrder::default().gate, 0);
-        assert_eq!(CastIntOrder::default().target, 0);
-        assert!(CastUnitsOrder::default().units.is_empty());
-        assert_eq!(CastTransmuteOrder::default().number, 0);
+        let exchange = ExchangeOrder::default();
+        assert_eq!(
+            (
+                exchange.give_item,
+                exchange.give_amount,
+                exchange.expect_item,
+                exchange.expect_amount,
+                exchange.exchange_status,
+                exchange.target,
+            ),
+            (0, 0, 0, 0, -1, None)
+        );
+        let turn = TurnOrder::default();
+        assert_eq!(turn.repeating, 0);
+        assert!(turn.turn_orders.is_empty());
+        assert_eq!(
+            (CastOrder::default().spell, CastOrder::default().level),
+            (0, 0)
+        );
+        let cast_mind = CastMindOrder::default();
+        assert_eq!(
+            (cast_mind.spell, cast_mind.level, cast_mind.id),
+            (0, 0, None)
+        );
+        let cast_region = CastRegionOrder::default();
+        assert_eq!(
+            (
+                cast_region.spell,
+                cast_region.level,
+                cast_region.xloc,
+                cast_region.yloc,
+                cast_region.zloc,
+            ),
+            (0, 0, 0, 0, 0)
+        );
+        let teleport = TeleportOrder::default();
+        assert_eq!(
+            (
+                teleport.spell,
+                teleport.level,
+                teleport.xloc,
+                teleport.yloc,
+                teleport.zloc,
+                teleport.gate,
+            ),
+            (0, 0, 0, 0, 0, 0)
+        );
+        assert!(teleport.units.is_empty());
+        let cast_int = CastIntOrder::default();
+        assert_eq!((cast_int.spell, cast_int.level, cast_int.target), (0, 0, 0));
+        let cast_units = CastUnitsOrder::default();
+        assert_eq!((cast_units.spell, cast_units.level), (0, 0));
+        assert!(cast_units.units.is_empty());
+        let cast_transmute = CastTransmuteOrder::default();
+        assert_eq!(
+            (
+                cast_transmute.spell,
+                cast_transmute.level,
+                cast_transmute.item,
+                cast_transmute.number,
+            ),
+            (0, 0, 0, 0)
+        );
         assert!(EvictOrder::default().targets.is_empty());
         assert_eq!(IdleOrder::default().order.kind, OrderVerb::Idle);
-        assert_eq!(TransportOrder::default().item, -1);
-        assert_eq!(TransportOrder::default().amount, 0);
-        assert_eq!(JoinOrder::default().merge, 0);
+        let transport = TransportOrder::default();
+        assert_eq!(
+            (
+                transport.item,
+                transport.amount,
+                transport.except,
+                transport.target
+            ),
+            (-1, 0, 0, None)
+        );
+        assert_eq!(
+            TransportOrder::distribute().order.kind,
+            OrderVerb::Distribute
+        );
+        let join = JoinOrder::default();
+        assert_eq!((join.target, join.overload, join.merge), (None, 0, 0));
 
         let unit_orders = UnitOrders::default();
+        assert_eq!(
+            (
+                unit_orders.destroy,
+                unit_orders.enter,
+                unit_orders.build,
+                unit_orders.in_turn_block,
+            ),
+            (0, 0, 0, 0)
+        );
+        assert_eq!(unit_orders.promote, None);
         assert!(unit_orders.find_orders.is_empty());
         assert!(unit_orders.give_orders.is_empty());
         assert!(unit_orders.withdraw_orders.is_empty());
@@ -836,9 +983,16 @@ mod tests {
         assert!(unit_orders.buy_orders.is_empty());
         assert!(unit_orders.sell_orders.is_empty());
         assert!(unit_orders.forget_orders.is_empty());
+        assert!(unit_orders.cast_orders.is_none());
+        assert!(unit_orders.teleport_orders.is_none());
+        assert!(unit_orders.steal_orders.is_none());
         assert!(unit_orders.month_orders.is_none());
+        assert!(unit_orders.attack_orders.is_none());
+        assert!(unit_orders.evict_orders.is_none());
         assert!(unit_orders.exchange_orders.is_empty());
         assert!(unit_orders.turn_orders.is_empty());
         assert!(unit_orders.transport_orders.is_empty());
+        assert!(unit_orders.present_month_orders.is_none());
+        assert!(unit_orders.join_orders.is_none());
     }
 }
