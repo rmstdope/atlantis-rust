@@ -507,7 +507,7 @@ where
         {
             continue;
         }
-        if targets.is_some_and(|targets| targets.contains(&current)) {
+        if distance > 0 && targets.is_some_and(|targets| targets.contains(&current)) {
             target_distance.get_or_insert(distance);
         }
         let neighbors = game.region(current).expect("path region exists").neighbors;
@@ -722,6 +722,78 @@ mod tests {
 
         assert_eq!(nearest_target_search, nearest_full);
         assert!(target_distances.len() < all_distances.len());
+    }
+
+    #[test]
+    fn nearest_target_search_continues_past_zero_cost_targets() {
+        let (mut game, array) = surface();
+        for region_id in game.region_ids().to_vec() {
+            game.region_mut(region_id).unwrap().terrain_type = Some(R_PLAIN);
+        }
+        let start = array.get_region(0, 0).expect("start exists");
+        let neighbors: Vec<_> = game
+            .region(start)
+            .expect("start region exists")
+            .neighbors
+            .iter()
+            .flatten()
+            .copied()
+            .take(2)
+            .collect();
+        assert_eq!(neighbors.len(), 2);
+        let zero_cost_target = neighbors[0];
+        let zero_target_neighbors: Vec<_> = game
+            .region(zero_cost_target)
+            .expect("zero-cost target exists")
+            .neighbors
+            .iter()
+            .flatten()
+            .copied()
+            .collect();
+        let (topology_distances, _) = super::dijkstra_all(&game, start, &BTreeSet::new(), |_, _| 1);
+        let positive_cost_target = topology_distances
+            .keys()
+            .copied()
+            .find(|target| {
+                *target != start
+                    && !neighbors.contains(target)
+                    && !zero_target_neighbors.contains(target)
+            })
+            .expect("a target beyond the first two steps exists");
+        let targets = BTreeSet::from([zero_cost_target, positive_cost_target]);
+        let blocked = BTreeSet::new();
+
+        let (all_distances, _) = super::dijkstra_all(&game, start, &blocked, |_, next| {
+            if next == zero_cost_target {
+                0
+            } else {
+                1
+            }
+        });
+        let (target_distances, _) =
+            super::dijkstra_until_targets(&game, start, &blocked, &targets, |_, next| {
+                if next == zero_cost_target {
+                    0
+                } else {
+                    1
+                }
+            });
+        let nearest_positive_full = targets
+            .iter()
+            .filter_map(|target| all_distances.get(target).map(|(cost, _)| (*cost, *target)))
+            .filter(|(cost, _)| *cost > 0)
+            .min();
+        let nearest_positive_target_search = targets
+            .iter()
+            .filter_map(|target| {
+                target_distances
+                    .get(target)
+                    .map(|(cost, _)| (*cost, *target))
+            })
+            .filter(|(cost, _)| *cost > 0)
+            .min();
+
+        assert_eq!(nearest_positive_target_search, nearest_positive_full);
     }
 
     #[test]
