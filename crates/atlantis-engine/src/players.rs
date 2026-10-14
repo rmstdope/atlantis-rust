@@ -543,7 +543,7 @@ fn find_player_unit(game: &Game, faction_id: FactionId, unit_tag: &str) -> Optio
     None
 }
 
-fn discover_item(
+pub(crate) fn discover_item(
     game: &mut Game,
     faction_id: FactionId,
     item_type: ItemId,
@@ -598,7 +598,7 @@ fn faction_event(faction: &mut Faction, event: String) {
     }
 }
 
-fn unit_event(game: &mut Game, faction_id: FactionId, unit_id: UnitId, event: String) {
+pub(crate) fn unit_event(game: &mut Game, faction_id: FactionId, unit_id: UnitId, event: String) {
     let unit = game.unit(unit_id).expect("resolved unit exists");
     let name = unit
         .name

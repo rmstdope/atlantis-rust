@@ -507,6 +507,24 @@ pub struct ItemDef {
     pub max_grant: i32,
 }
 
+impl crate::defs::objects::ObjectItemLookup for ItemDef {
+    fn name(&self) -> &str {
+        self.name.as_deref().unwrap_or("")
+    }
+
+    fn abbreviation(&self) -> &str {
+        self.abbreviation.as_deref().unwrap_or("")
+    }
+
+    fn is_ship(&self) -> bool {
+        self.item_type & ItemTypeFlags::SHIP != 0
+    }
+
+    fn is_disabled(&self) -> bool {
+        self.flags & ItemFlags::DISABLED != 0
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub struct ManDef {

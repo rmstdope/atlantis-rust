@@ -2,21 +2,22 @@ use std::collections::VecDeque;
 use std::io::{self, Cursor};
 
 use crate::defs::{
-    enums::flags as tax_flags, skills::skill_flags, BattleItemFlags, GameDefs, ItemFlags, ItemId,
-    ItemTypeFlags, RulesetTables, WeaponFlags,
+    enums::flags as tax_flags, skills::skill_flags, BattleItemFlags, BuildTarget, GameDefs,
+    ItemFlags, ItemId, ItemTypeFlags, RulesetTables, WeaponFlags,
 };
 use crate::model::{Faction, FactionId, Game, ModelError, ObjectId, UnitId, UnitType};
 use crate::ruleset::Ruleset;
 use crate::text::{get_at, get_token, is_equal, value, TextInput};
 
 use super::{
-    parse_order_verb, parse_unit_id, CastIntOrder, CastMindOrder, CastOrder, CastOrderData,
-    CastRegionOrder, CastTransmuteOrder, CastUnitsOrder, MoveDir, MoveOrder, OrderData, OrderVerb,
-    SailOrder, TeleportOrder, TurnOrder,
+    parse_order_verb, parse_unit_id, BuildOrder, BuyOrder, CastIntOrder, CastMindOrder, CastOrder,
+    CastOrderData, CastRegionOrder, CastTransmuteOrder, CastUnitsOrder, ExchangeOrder, GiveOrder,
+    JoinOrder, MoveDir, MoveOrder, OrderData, OrderVerb, ProduceOrder, SailOrder, SellOrder,
+    TeleportOrder, TransportOrder, TurnOrder, WithdrawOrder,
 };
 
 const FLAG_AUTOTAX: i32 = 0x0004;
-const TAX_AUTO: i32 = 3;
+const TAX_NONE: i32 = 0;
 const TAX_TAX: i32 = 1;
 const TAX_PILLAGE: i32 = 2;
 const GENERIC_CAST_SPELL_NAMES: &[&str] = &[
@@ -59,6 +60,7 @@ const GENERIC_CAST_SPELL_NAMES: &[&str] = &[
     "blasphemous ritual",
     "phantasmal entertainment",
 ];
+const TAX_AUTO: i32 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OrderParseMode {
@@ -557,6 +559,12 @@ impl<'a> Parser<'a> {
                 .old_orders
                 .push(raw_line.to_owned());
         }
+        if self.mode == OrderParseMode::Check {
+            self.game
+                .unit_mut(unit_id)
+                .expect("form unit exists")
+                .clear_orders();
+        }
         self.unit_stack.pop();
     }
 
@@ -815,6 +823,22 @@ impl<'a> Parser<'a> {
             Some(OrderVerb::Destroy) => self.parse_destroy_order(unit_id),
             Some(OrderVerb::Enter) => self.parse_enter_order(unit_id, line),
             Some(OrderVerb::Leave) => self.parse_leave_order(unit_id),
+            Some(OrderVerb::Buy) => self.parse_buy_sell_order(unit_id, line, true),
+            Some(OrderVerb::Sell) => self.parse_buy_sell_order(unit_id, line, false),
+            Some(OrderVerb::Produce) => self.parse_produce_order(unit_id, line),
+            Some(OrderVerb::Work) => self.parse_work_order(unit_id),
+            Some(OrderVerb::Entertain) => self.parse_entertain_order(unit_id),
+            Some(OrderVerb::Build) => self.parse_build_order(unit_id, line),
+            Some(OrderVerb::Give) => self.parse_give_order(unit_id, line, false),
+            Some(OrderVerb::Take) => self.parse_give_order(unit_id, line, true),
+            Some(OrderVerb::Withdraw) => self.parse_withdraw_order(unit_id, line),
+            Some(OrderVerb::Exchange) => self.parse_exchange_order(unit_id, line),
+            Some(OrderVerb::Transport) => self.parse_transport_order(unit_id, line, false),
+            Some(OrderVerb::Distribute) => self.parse_transport_order(unit_id, line, true),
+            Some(OrderVerb::Join) => self.parse_join_order(unit_id, line),
+            Some(OrderVerb::Claim) => self.parse_claim_order(unit_id, line),
+            Some(OrderVerb::Tax) => self.parse_tax_pillage_order(unit_id, false),
+            Some(OrderVerb::Pillage) => self.parse_tax_pillage_order(unit_id, true),
             _ => {}
         }
     }
@@ -1729,6 +1753,820 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// C++: `parseorders.cpp` `ProcessBuyOrder` and `ProcessSellOrder`.
+    fn parse_buy_sell_order(&mut self, unit_id: UnitId, line: &mut String, is_buy: bool) {
+        let (verb, side) = if is_buy {
+            ("BUY", "buy")
+        } else {
+            ("SELL", "sell")
+        };
+        let Some(number) = get_token(line) else {
+            self.record_unit_error(unit_id, &format!("{verb}: Number to {side} not given."));
+            return;
+        };
+        let number = if is_equal(&number, "all") {
+            -1
+        } else {
+            value(&number)
+        };
+        if number == 0 {
+            self.record_unit_error(unit_id, &format!("{verb}: Number to {side} not given."));
+            return;
+        }
+        let Some(item_token) = get_token(line) else {
+            self.record_unit_error(unit_id, &format!("{verb}: Item not given."));
+            return;
+        };
+
+        let ruleset =
+            <dyn Ruleset>::from_name(self.defs.ruleset_name).expect("parser ruleset is supported");
+        let tables = ruleset.tables();
+        let item = tables
+            .item_families
+            .parse_giveable_item(&item_token)
+            .map(|item| item as i32)
+            .or_else(|| {
+                if is_buy
+                    && (is_equal(&item_token, "peasant")
+                        || is_equal(&item_token, "peasants")
+                        || is_equal(&item_token, "peas"))
+                {
+                    self.game
+                        .unit(unit_id)
+                        .and_then(|unit| unit.object)
+                        .and_then(|object_id| self.game.object(object_id))
+                        .and_then(|object| object.region)
+                        .and_then(|region_id| self.game.region(region_id))
+                        .map(|region| region.race)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(-1);
+
+        if self.mode == OrderParseMode::Turn {
+            let unit = self.game.unit_mut(unit_id).expect("selected unit exists");
+            if is_buy {
+                unit.orders.buy_orders.push(BuyOrder {
+                    item,
+                    num: number,
+                    ..BuyOrder::default()
+                });
+            } else {
+                unit.orders.sell_orders.push(SellOrder {
+                    item,
+                    num: number,
+                    ..SellOrder::default()
+                });
+            }
+        }
+    }
+
+    /// C++: `parseorders.cpp` `ProcessProduceOrder`.
+    fn parse_produce_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let mut target = 0;
+        let mut token = get_token(line);
+        if let Some(quantity) = token.as_deref().map(value).filter(|quantity| *quantity > 0) {
+            target = quantity;
+            token = get_token(line);
+        }
+        let Some(token) = token else {
+            self.record_unit_error(unit_id, "PRODUCE: No item given.");
+            return;
+        };
+
+        let ruleset =
+            <dyn Ruleset>::from_name(self.defs.ruleset_name).expect("parser ruleset is supported");
+        let tables = ruleset.tables();
+        let Some(item_index) = tables.item_families.parse_enabled_item(&token) else {
+            self.record_unit_error(unit_id, "PRODUCE: Invalid item.");
+            return;
+        };
+        let item = &tables.item_families.items[item_index];
+        if item.item_type == ItemTypeFlags::SHIP {
+            self.record_unit_error(unit_id, "PRODUCE: Use BUILD for ships.");
+            return;
+        }
+        let skill = item
+            .production_skill
+            .as_deref()
+            .and_then(|skill| crate::defs::skills::lookup_skill(&tables.skills.skills, skill))
+            .map_or(-1, |skill| skill as i32);
+        self.set_month_order(
+            unit_id,
+            "PRODUCE",
+            OrderData::Produce(ProduceOrder {
+                item: item_index as i32,
+                skill,
+                target,
+                ..ProduceOrder::default()
+            }),
+            true,
+        );
+    }
+
+    /// C++: `parseorders.cpp` `ProcessWorkOrder`.
+    fn parse_work_order(&mut self, unit_id: UnitId) {
+        self.set_month_order(
+            unit_id,
+            "WORK",
+            OrderData::Produce(ProduceOrder {
+                item: ItemId::Silver.index() as i32,
+                skill: -1,
+                target: 0,
+                ..ProduceOrder::default()
+            }),
+            true,
+        );
+    }
+
+    /// C++: `parseorders.cpp` `ProcessEntertainOrder`.
+    fn parse_entertain_order(&mut self, unit_id: UnitId) {
+        let ruleset =
+            <dyn Ruleset>::from_name(self.defs.ruleset_name).expect("parser ruleset is supported");
+        let tables = ruleset.tables();
+        let skill = tables
+            .skills
+            .skills
+            .iter()
+            .position(|skill| {
+                skill
+                    .name
+                    .is_some_and(|name| is_equal(name, "entertainment"))
+            })
+            .expect("entertainment skill is defined") as i32;
+        self.set_month_order(
+            unit_id,
+            "ENTERTAIN",
+            OrderData::Produce(ProduceOrder {
+                item: ItemId::Silver.index() as i32,
+                skill,
+                target: 0,
+                ..ProduceOrder::default()
+            }),
+            false,
+        );
+    }
+
+    /// C++: `parseorders.cpp` `ProcessBuildOrder`.
+    fn parse_build_order(&mut self, unit_id: UnitId, line: &mut String) {
+        self.game
+            .unit_mut(unit_id)
+            .expect("selected unit exists")
+            .orders
+            .build = 0;
+        let mut order = BuildOrder::default();
+        let mut need_to_complete = 0;
+        let token = get_token(line);
+
+        if let Some(token) = token {
+            if is_equal(&token, "help") {
+                if self.mode == OrderParseMode::Turn {
+                    let Some(target) =
+                        super::parse_unit_id(line).filter(|target| target.unitnum != -1)
+                    else {
+                        self.record_unit_error(unit_id, "BUILD: Non-existent unit to help.");
+                        return;
+                    };
+                    order.target = Some(target);
+                }
+            } else {
+                let ruleset = <dyn Ruleset>::from_name(self.defs.ruleset_name)
+                    .expect("parser ruleset is supported");
+                let tables = ruleset.tables();
+                let Some(target) = crate::defs::parse_object(
+                    &token,
+                    1,
+                    &tables.objects,
+                    &tables.item_families.items,
+                ) else {
+                    self.record_unit_error(unit_id, "BUILD: Not a valid object name.");
+                    return;
+                };
+
+                if self.mode == OrderParseMode::Turn {
+                    let region_id = self
+                        .game
+                        .unit(unit_id)
+                        .and_then(|unit| unit.object)
+                        .and_then(|object_id| self.game.object(object_id))
+                        .and_then(|object| object.region);
+                    let is_ocean = region_id
+                        .and_then(|region_id| self.game.region(region_id))
+                        .and_then(|region| region.terrain_type)
+                        .and_then(|terrain| tables.terrains.get(terrain))
+                        .is_some_and(|terrain| {
+                            terrain.similar_type == crate::defs::terrains::R_OCEAN as i32
+                        });
+                    if is_ocean {
+                        self.record_unit_error(unit_id, "BUILD: Can't build in an ocean.");
+                        return;
+                    }
+
+                    match target {
+                        BuildTarget::Object(object_id) => {
+                            let object = &tables.objects[object_id];
+                            if object.flags & crate::defs::objects::object_flags::CANENTER == 0
+                                || object
+                                    .skill
+                                    .and_then(|skill| {
+                                        crate::defs::skills::lookup_skill(
+                                            &tables.skills.skills,
+                                            skill,
+                                        )
+                                    })
+                                    .is_none()
+                            {
+                                self.record_unit_error(unit_id, "BUILD: Can't build that.");
+                                return;
+                            }
+                            order.new_building = object_id as i32;
+                        }
+                        BuildTarget::ShipItem(item_index) => {
+                            let item = &tables.item_families.items[item_index];
+                            let coastal_or_lakeside = region_id.is_some_and(|region_id| {
+                                is_coastal_or_lakeside(self.game, region_id, &tables)
+                            });
+                            if !coastal_or_lakeside && item.fly <= 0 {
+                                self.record_unit_error(
+                                    unit_id,
+                                    "BUILD: Can't build ship in non-coastal or lakeside region.",
+                                );
+                                return;
+                            }
+
+                            let item_id = ItemId::from_index(item_index)
+                                .expect("ship item index is in the item table");
+                            let item_count = self
+                                .game
+                                .unit(unit_id)
+                                .expect("selected unit exists")
+                                .items
+                                .get_num(item_id);
+                            self.game
+                                .unit_mut(unit_id)
+                                .expect("selected unit exists")
+                                .orders
+                                .build = -(item_index as i32);
+                            need_to_complete = if item_count > 0 {
+                                item_count
+                            } else {
+                                item.production_months
+                            };
+                        }
+                    }
+                }
+            }
+        } else if self.mode == OrderParseMode::Turn {
+            let tables = <dyn Ruleset>::from_name(self.defs.ruleset_name)
+                .expect("parser ruleset is supported")
+                .tables();
+            let item = self
+                .game
+                .unit(unit_id)
+                .expect("selected unit exists")
+                .items
+                .entries()
+                .iter()
+                .find(|entry| {
+                    tables
+                        .item_families
+                        .items
+                        .get(entry.item_type.index())
+                        .is_some_and(|item| {
+                            item.item_type & ItemTypeFlags::SHIP != 0
+                                && item.flags & ItemFlags::DISABLED == 0
+                        })
+                })
+                .map(|entry| (entry.item_type.index(), entry.num));
+            if let Some((item_index, item_count)) = item {
+                self.game
+                    .unit_mut(unit_id)
+                    .expect("selected unit exists")
+                    .orders
+                    .build = -(item_index as i32);
+                need_to_complete = item_count;
+            }
+        }
+
+        order.needtocomplete = need_to_complete;
+        self.set_month_order(unit_id, "BUILD", OrderData::Build(order), true);
+    }
+
+    /// C++: `parseorders.cpp` `ProcessGiveOrder`.
+    fn parse_give_order(&mut self, unit_id: UnitId, line: &mut String, is_take: bool) {
+        let verb = if is_take { "TAKE" } else { "GIVE" };
+        if is_take
+            && !get_token(line)
+                .as_deref()
+                .is_some_and(|token| is_equal(token, "from"))
+        {
+            self.record_unit_error(unit_id, "TAKE: Missing FROM.");
+            return;
+        }
+
+        let Some(target) = super::parse_unit_id(line) else {
+            self.record_unit_error(unit_id, &format!("{verb}: Invalid target."));
+            return;
+        };
+        if is_take && target.unitnum == -1 {
+            self.record_unit_error(unit_id, "TAKE: Invalid target.");
+            return;
+        }
+
+        let Some(amount_token) = get_token(line) else {
+            self.record_unit_error(unit_id, &format!("{verb}: No amount given."));
+            return;
+        };
+        let amount = if !is_take && is_equal(&amount_token, "unit") {
+            -1
+        } else if is_equal(&amount_token, "all") {
+            -2
+        } else {
+            let amount = value(&amount_token);
+            if amount < 1 {
+                self.record_unit_error(unit_id, &format!("{verb}: Illegal amount given."));
+                return;
+            }
+            amount
+        };
+
+        let mut item = -1;
+        let mut unfinished = 0;
+        let tables = <dyn Ruleset>::from_name(self.defs.ruleset_name)
+            .expect("parser ruleset is supported")
+            .tables();
+        if amount != -1 {
+            let Some(mut item_token) = get_token(line) else {
+                self.record_unit_error(unit_id, &format!("{verb}: No item given."));
+                return;
+            };
+            if is_equal(&item_token, "unfinished") {
+                unfinished = 1;
+                let Some(next_token) = get_token(line) else {
+                    self.record_unit_error(unit_id, &format!("{verb}: No item given."));
+                    return;
+                };
+                item_token = next_token;
+            }
+
+            item = if target.unitnum == -1 {
+                tables
+                    .item_families
+                    .parse_enabled_item(&item_token)
+                    .map(|index| index as i32)
+                    .unwrap_or(-1)
+            } else {
+                tables
+                    .item_families
+                    .parse_giveable_item(&item_token)
+                    .map(|index| index as i32)
+                    .unwrap_or(-1)
+            };
+
+            if amount == -2 {
+                if let Some(item_class) = give_all_item_class(&item_token) {
+                    item = item_class;
+                } else if item == -1 {
+                    self.record_unit_error(
+                        unit_id,
+                        &format!("{verb}: Invalid item or item class."),
+                    );
+                    return;
+                }
+            } else if item == -1 {
+                self.record_unit_error(unit_id, &format!("{verb}: Invalid item."));
+                return;
+            }
+
+            if unfinished != 0
+                && item != -(ItemTypeFlags::SHIP)
+                && item != -(crate::defs::NITEMS as i32)
+                && !(item >= 0
+                    && tables
+                        .item_families
+                        .items
+                        .get(item as usize)
+                        .is_some_and(|definition| definition.item_type & ItemTypeFlags::SHIP != 0))
+            {
+                self.record_unit_error(
+                    unit_id,
+                    &format!("{verb}: That item does not have an unfinished version."),
+                );
+                return;
+            }
+        }
+
+        let mut except = 0;
+        if get_token(line).is_some_and(|token| is_equal(&token, "except")) {
+            if amount != -2 {
+                self.record_unit_error(unit_id, &format!("{verb}: EXCEPT only valid with ALL"));
+                return;
+            }
+            if item < 0 {
+                self.record_unit_error(
+                    unit_id,
+                    &format!("{verb}: EXCEPT only valid with specific items."),
+                );
+                return;
+            }
+            let Some(value_token) = get_token(line) else {
+                self.record_unit_error(unit_id, &format!("{verb}: EXCEPT requires a value."));
+                return;
+            };
+            except = value(&value_token);
+            if except <= 0 {
+                self.record_unit_error(unit_id, &format!("{verb}: Invalid EXCEPT value."));
+                return;
+            }
+        }
+
+        if self.mode == OrderParseMode::Turn {
+            let mut order = if is_take {
+                GiveOrder::take()
+            } else {
+                GiveOrder::default()
+            };
+            order.item = item;
+            order.amount = amount;
+            order.except = except;
+            order.unfinished = unfinished;
+            order.target = Some(target);
+            self.game
+                .unit_mut(unit_id)
+                .expect("selected unit exists")
+                .orders
+                .give_orders
+                .push(order);
+        }
+    }
+
+    /// C++: `parseorders.cpp` `ProcessWithdrawOrder`.
+    fn parse_withdraw_order(&mut self, unit_id: UnitId, line: &mut String) {
+        if self.defs.allow_withdraw == 0 {
+            self.record_unit_error(unit_id, "WITHDRAW is not a valid order.");
+            return;
+        }
+
+        let Some(token) = get_token(line) else {
+            self.record_unit_error(unit_id, "WITHDRAW: No amount given.");
+            return;
+        };
+        let parsed_amount = value(&token);
+        let (amount, item_token) = if parsed_amount < 1 {
+            (1, token)
+        } else {
+            let Some(item) = get_token(line) else {
+                self.record_unit_error(unit_id, "WITHDRAW: No item given.");
+                return;
+            };
+            (parsed_amount, item)
+        };
+        let tables = <dyn Ruleset>::from_name(self.defs.ruleset_name)
+            .expect("parser ruleset is supported")
+            .tables();
+        let Some(item) = tables.item_families.parse_giveable_item(&item_token) else {
+            self.record_unit_error(unit_id, "WITHDRAW: Invalid item.");
+            return;
+        };
+        let definition = &tables.item_families.items[item];
+        if definition.flags & ItemFlags::DISABLED != 0
+            || definition.item_type & ItemTypeFlags::NORMAL == 0
+            || item == ItemId::Silver.index()
+        {
+            self.record_unit_error(unit_id, "WITHDRAW: Invalid item.");
+            return;
+        }
+
+        if self.mode == OrderParseMode::Turn {
+            self.game
+                .unit_mut(unit_id)
+                .expect("selected unit exists")
+                .orders
+                .withdraw_orders
+                .push(WithdrawOrder {
+                    item: item as i32,
+                    amount,
+                    ..WithdrawOrder::default()
+                });
+        }
+    }
+
+    /// C++: `parseorders.cpp` `ProcessExchangeOrder`.
+    fn parse_exchange_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(target) = super::parse_unit_id(line) else {
+            self.record_unit_error(unit_id, "EXCHANGE: Invalid target.");
+            return;
+        };
+        let Some(amount_token) = get_token(line) else {
+            self.record_unit_error(unit_id, "EXCHANGE: No amount given.");
+            return;
+        };
+        let give_amount = value(&amount_token);
+        if give_amount < 0 {
+            self.record_unit_error(unit_id, "EXCHANGE: Illegal amount given.");
+            return;
+        }
+        let Some(item_token) = get_token(line) else {
+            self.record_unit_error(unit_id, "EXCHANGE: No item given.");
+            return;
+        };
+        let tables = <dyn Ruleset>::from_name(self.defs.ruleset_name)
+            .expect("parser ruleset is supported")
+            .tables();
+        let Some(give_item) = tables.item_families.parse_giveable_item(&item_token) else {
+            self.record_unit_error(unit_id, "EXCHANGE: Invalid item.");
+            return;
+        };
+        if tables.item_families.items[give_item].item_type & ItemTypeFlags::SHIP != 0 {
+            self.record_unit_error(unit_id, "EXCHANGE: Can't exchange ships.");
+            return;
+        }
+
+        let Some(amount_token) = get_token(line) else {
+            self.record_unit_error(unit_id, "EXCHANGE: No amount expected.");
+            return;
+        };
+        let expect_amount = value(&amount_token);
+        if expect_amount < 0 {
+            self.record_unit_error(unit_id, "EXCHANGE: Illegal amount given.");
+            return;
+        }
+        let Some(item_token) = get_token(line) else {
+            self.record_unit_error(unit_id, "EXCHANGE: No item expected.");
+            return;
+        };
+        let Some(expect_item) = tables.item_families.parse_giveable_item(&item_token) else {
+            self.record_unit_error(unit_id, "EXCHANGE: Invalid item.");
+            return;
+        };
+        if tables.item_families.items[expect_item].item_type & ItemTypeFlags::SHIP != 0 {
+            self.record_unit_error(unit_id, "EXCHANGE: Can't exchange ships.");
+            return;
+        }
+
+        if self.mode == OrderParseMode::Turn {
+            self.game
+                .unit_mut(unit_id)
+                .expect("selected unit exists")
+                .orders
+                .exchange_orders
+                .push(ExchangeOrder {
+                    give_item: give_item as i32,
+                    give_amount,
+                    expect_item: expect_item as i32,
+                    expect_amount,
+                    target: Some(target),
+                    ..ExchangeOrder::default()
+                });
+        }
+    }
+
+    /// C++: `parseorders.cpp` `ProcessTransportOrder` and `ProcessDistributeOrder`.
+    fn parse_transport_order(&mut self, unit_id: UnitId, line: &mut String, distribute: bool) {
+        let verb = if distribute {
+            "DISTRIBUTE"
+        } else {
+            "TRANSPORT"
+        };
+        let Some(target) = super::parse_unit_id(line) else {
+            self.record_unit_error(unit_id, &format!("{verb}: Invalid target."));
+            return;
+        };
+        let Some(amount_token) = get_token(line) else {
+            self.record_unit_error(unit_id, &format!("{verb}: No amount given."));
+            return;
+        };
+        let amount = if is_equal(&amount_token, "all") {
+            -1
+        } else {
+            value(&amount_token)
+        };
+        let Some(item_token) = get_token(line) else {
+            self.record_unit_error(unit_id, &format!("{verb}: No item given."));
+            return;
+        };
+        let tables = <dyn Ruleset>::from_name(self.defs.ruleset_name)
+            .expect("parser ruleset is supported")
+            .tables();
+        let Some(item) = tables.item_families.parse_transportable_item(&item_token) else {
+            let message = if distribute {
+                format!("{verb}: Invalid item {item_token}.")
+            } else {
+                format!("{verb}: Invalid item.")
+            };
+            self.record_unit_error(unit_id, &message);
+            return;
+        };
+
+        let mut except = 0;
+        if get_token(line).is_some_and(|token| is_equal(&token, "except")) {
+            let Some(value_token) = get_token(line) else {
+                self.record_unit_error(unit_id, &format!("{verb}: EXCEPT requires a value."));
+                return;
+            };
+            except = value(&value_token);
+            if except <= 0 {
+                self.record_unit_error(unit_id, &format!("{verb}: Invalid except value."));
+                return;
+            }
+        }
+
+        if self.mode == OrderParseMode::Turn {
+            let mut order = if distribute {
+                TransportOrder::distribute()
+            } else {
+                TransportOrder::default()
+            };
+            order.item = item as i32;
+            order.amount = amount;
+            order.except = except;
+            order.target = Some(target);
+            self.game
+                .unit_mut(unit_id)
+                .expect("selected unit exists")
+                .orders
+                .transport_orders
+                .push(order);
+        }
+    }
+
+    /// C++: `parseorders.cpp` `ProcessJoinOrder`.
+    fn parse_join_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(target) = super::parse_unit_id(line).filter(|target| target.unitnum != -1) else {
+            self.record_unit_error(unit_id, "JOIN: No target given.");
+            return;
+        };
+        let mut overload = 1;
+        let mut merge = 0;
+        if let Some(option) = get_token(line) {
+            if is_equal(&option, "nooverload") {
+                overload = 0;
+            } else if is_equal(&option, "merge") {
+                merge = 1;
+            }
+        }
+        if self.mode == OrderParseMode::Turn {
+            self.game
+                .unit_mut(unit_id)
+                .expect("selected unit exists")
+                .orders
+                .join_orders = Some(JoinOrder {
+                target: Some(target),
+                overload,
+                merge,
+                ..JoinOrder::default()
+            });
+        }
+    }
+
+    /// C++: `parseorders.cpp` `ProcessClaimOrder`.
+    fn parse_claim_order(&mut self, unit_id: UnitId, line: &mut String) {
+        let Some(token) = get_token(line) else {
+            self.record_unit_error(unit_id, "CLAIM: No amount given.");
+            return;
+        };
+        let mut amount = value(&token);
+        if amount == 0 {
+            self.record_unit_error(unit_id, "CLAIM: No amount given.");
+            return;
+        }
+        if self.mode != OrderParseMode::Turn {
+            return;
+        }
+
+        let faction_id = self
+            .game
+            .unit(unit_id)
+            .and_then(|unit| unit.faction)
+            .or(self.faction_id)
+            .expect("selected unit has a faction");
+        let unclaimed = self
+            .game
+            .faction(faction_id)
+            .expect("selected faction exists")
+            .unclaimed;
+        if amount > unclaimed {
+            self.record_unit_error(unit_id, "CLAIM: Don't have that much unclaimed silver.");
+            amount = unclaimed;
+        }
+
+        let faction = self
+            .game
+            .faction_mut(faction_id)
+            .expect("selected faction exists");
+        faction.unclaimed -= amount;
+        let money = self
+            .game
+            .unit(unit_id)
+            .expect("selected unit exists")
+            .items
+            .get_num(ItemId::Silver);
+        self.game
+            .unit_mut(unit_id)
+            .expect("selected unit exists")
+            .items
+            .set_num(ItemId::Silver, money.wrapping_add(amount));
+        let tables = <dyn Ruleset>::from_name(self.defs.ruleset_name)
+            .expect("parser ruleset is supported")
+            .tables();
+        crate::players::discover_item(
+            self.game,
+            faction_id,
+            ItemId::Silver,
+            ItemId::Silver.index(),
+            &tables,
+        );
+        crate::players::unit_event(self.game, faction_id, unit_id, format!("Claims ${amount}."));
+    }
+
+    /// C++: `parseorders.cpp` `ProcessTaxOrder` and `ProcessPillageOrder`.
+    fn parse_tax_pillage_order(&mut self, unit_id: UnitId, pillage: bool) {
+        let taxing = self
+            .game
+            .unit(unit_id)
+            .map(|unit| unit.taxing)
+            .unwrap_or(TAX_NONE);
+        if (!pillage && taxing == TAX_PILLAGE) || (pillage && taxing == TAX_TAX) {
+            let error = if pillage {
+                "PILLAGE: The unit is already taxing."
+            } else {
+                "TAX: The unit is already pillaging."
+            };
+            self.record_unit_error(unit_id, error);
+            return;
+        }
+
+        let (has_month_order, delayed) = self
+            .game
+            .unit(unit_id)
+            .map(|unit| {
+                (
+                    unit.orders.month_orders.is_some(),
+                    unit.orders.in_turn_block != 0,
+                )
+            })
+            .unwrap_or((false, false));
+        if self.defs.tax_pillage_month_long != 0 && has_month_order {
+            self.game
+                .unit_mut(unit_id)
+                .expect("selected unit exists")
+                .orders
+                .month_orders = None;
+            let verb = if pillage { "PILLAGE" } else { "TAX" };
+            let delayed = if delayed { "DELAYED " } else { "" };
+            self.record_unit_error(
+                unit_id,
+                &format!("{verb}: Overwriting previous {delayed}month-long order."),
+            );
+        }
+        self.game
+            .unit_mut(unit_id)
+            .expect("selected unit exists")
+            .taxing = if pillage { TAX_PILLAGE } else { TAX_TAX };
+    }
+
+    fn set_month_order(
+        &mut self,
+        unit_id: UnitId,
+        verb: &str,
+        order: OrderData,
+        clear_month_long_tax: bool,
+    ) {
+        let (has_month_order, has_month_long_tax, delayed) = self
+            .game
+            .unit(unit_id)
+            .map(|unit| {
+                (
+                    unit.orders.month_orders.is_some(),
+                    self.defs.tax_pillage_month_long != 0
+                        && matches!(unit.taxing, TAX_TAX | TAX_PILLAGE),
+                    unit.orders.in_turn_block != 0,
+                )
+            })
+            .unwrap_or((false, false, false));
+        if has_month_order || has_month_long_tax {
+            if has_month_order {
+                self.game
+                    .unit_mut(unit_id)
+                    .expect("selected unit exists")
+                    .orders
+                    .month_orders = None;
+            }
+            let delayed = if delayed { "DELAYED " } else { "" };
+            self.record_unit_error(
+                unit_id,
+                &format!("{verb}: Overwriting previous {delayed}month-long order."),
+            );
+        }
+
+        let unit = self.game.unit_mut(unit_id).expect("selected unit exists");
+        if self.defs.tax_pillage_month_long != 0 && clear_month_long_tax {
+            unit.taxing = TAX_NONE;
+        }
+        unit.orders.month_orders = Some(order);
+    }
+
     fn store_old_order(&mut self, raw_line: &str, at_sign: bool, include_former: bool) {
         let Some(unit_id) = self.current_unit() else {
             return;
@@ -1928,6 +2766,57 @@ fn faction_is_npc(faction: &Faction) -> bool {
         .faction_types
         .iter()
         .any(|(name, value)| *value == -1 && (is_equal(name, "War") || is_equal(name, "Martial")))
+}
+
+/// C++: `parseorders.cpp` `ProcessGiveOrder` item-class aliases.
+fn give_all_item_class(token: &str) -> Option<i32> {
+    [
+        (ItemTypeFlags::NORMAL, &["normal"][..]),
+        (ItemTypeFlags::ADVANCED, &["advanced"][..]),
+        (ItemTypeFlags::TRADE, &["trade"][..]),
+        (ItemTypeFlags::MAN, &["man", "men"][..]),
+        (ItemTypeFlags::MONSTER, &["monster", "monsters"][..]),
+        (ItemTypeFlags::MAGIC, &["magic"][..]),
+        (ItemTypeFlags::WEAPON, &["weapon", "weapons"][..]),
+        (ItemTypeFlags::ARMOR, &["armor"][..]),
+        (ItemTypeFlags::MOUNT, &["mount", "mounts"][..]),
+        (ItemTypeFlags::BATTLE, &["battle"][..]),
+        (ItemTypeFlags::SPECIAL, &["special"][..]),
+        (ItemTypeFlags::FOOD, &["food"][..]),
+        (ItemTypeFlags::TOOL, &["tool", "tools"][..]),
+        (crate::defs::NITEMS as i32, &["item", "items"][..]),
+        (ItemTypeFlags::SHIP, &["ship", "ships"][..]),
+    ]
+    .into_iter()
+    .find_map(|(item_class, names)| {
+        names
+            .iter()
+            .any(|name| is_equal(token, name))
+            .then_some(-item_class)
+    })
+}
+
+/// C++: `aregion.cpp` `ARegion::IsCoastalOrLakeside`.
+fn is_coastal_or_lakeside(
+    game: &Game,
+    region_id: crate::model::RegionId,
+    tables: &RulesetTables,
+) -> bool {
+    let is_ocean = |region: &crate::model::Region| {
+        region
+            .terrain_type
+            .and_then(|terrain| tables.terrains.get(terrain))
+            .is_some_and(|terrain| terrain.similar_type == crate::defs::terrains::R_OCEAN as i32)
+    };
+    let Some(region) = game.region(region_id) else {
+        return false;
+    };
+    is_ocean(region)
+        || region
+            .neighbors
+            .iter()
+            .flatten()
+            .any(|neighbor_id| game.region(*neighbor_id).is_some_and(is_ocean))
 }
 
 /// C++: `unit.cpp` `Unit::Taxers`; only the positive-taxer result is needed here.
@@ -2206,9 +3095,11 @@ mod tests {
     use crate::defs::{skills::skill_flags, GameDefs, ItemId};
     use crate::model::{Faction, Game, Object, Region, Unit};
     use crate::orders::{
-        CastIntOrder, CastOrder, CastOrderData, CastRegionOrder, CastTransmuteOrder,
-        CastUnitsOrder, MoveDir, MoveOrder, OrderData, OrderUnitId, OrderVerb, TeleportOrder,
-        TurnOrder, MOVE_ENTER, MOVE_IN, MOVE_OUT, MOVE_PAUSE,
+        BuildOrder, BuyOrder, CastIntOrder, CastOrder, CastOrderData, CastRegionOrder,
+        CastTransmuteOrder, CastUnitsOrder, ExchangeOrder, GiveOrder, JoinOrder, MoveDir,
+        MoveOrder, Order, OrderData, OrderUnitId, OrderVerb, ProduceOrder, SellOrder,
+        TeleportOrder, TransportOrder, TurnOrder, WithdrawOrder, MOVE_ENTER, MOVE_IN, MOVE_OUT,
+        MOVE_PAUSE,
     };
     use crate::ruleset::Ruleset;
     use crate::text::is_equal;
@@ -3487,6 +4378,901 @@ mod tests {
     }
 
     #[test]
+    fn study_orders_remain_dispatched_with_trade_orders() {
+        let (mut game, _, _, unit_id) = game_with_unit();
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nstudy entertainment\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            &game.unit(unit_id).unwrap().orders.month_orders,
+            Some(OrderData::Study(_))
+        ));
+    }
+
+    #[test]
+    fn buy_and_sell_parse_all_quantities_aliases_and_errors() {
+        let (mut game, _, object_id, unit_id) = game_with_unit();
+        let region_id = game.object(object_id).unwrap().region.unwrap();
+        let race = ItemId::Tribesman.index() as i32;
+        game.region_mut(region_id).unwrap().race = race;
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\n\
+              buy 1 peasant\nbuy 2 peasants\nbuy 3 peas\nbuy ALL WOOD\n\
+              sell 4 iron\nsell all horse\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        let unit = game.unit(unit_id).unwrap();
+        assert_eq!(
+            unit.orders.buy_orders,
+            [
+                BuyOrder {
+                    item: race,
+                    num: 1,
+                    ..BuyOrder::default()
+                },
+                BuyOrder {
+                    item: race,
+                    num: 2,
+                    ..BuyOrder::default()
+                },
+                BuyOrder {
+                    item: race,
+                    num: 3,
+                    ..BuyOrder::default()
+                },
+                BuyOrder {
+                    item: ItemId::Wood.index() as i32,
+                    num: -1,
+                    ..BuyOrder::default()
+                }
+            ]
+        );
+        assert_eq!(
+            unit.orders.sell_orders,
+            [
+                SellOrder {
+                    item: ItemId::Iron.index() as i32,
+                    num: 4,
+                    ..SellOrder::default()
+                },
+                SellOrder {
+                    item: ItemId::Horse.index() as i32,
+                    num: -1,
+                    ..SellOrder::default()
+                }
+            ]
+        );
+
+        let (mut check_game, _, _, check_unit) = game_with_unit();
+        let check = parse_order_file(
+            &mut check_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\n\
+              buy\nbuy 0 wood\nbuy 1\nsell\nsell 0 iron\nsell 1\n#end\n",
+            OrderParseMode::Check,
+        )
+        .unwrap();
+        assert_eq!(
+            check.errors,
+            [
+                "BUY: Number to buy not given.",
+                "BUY: Number to buy not given.",
+                "BUY: Item not given.",
+                "SELL: Number to sell not given.",
+                "SELL: Number to sell not given.",
+                "SELL: Item not given."
+            ]
+        );
+        assert!(check_game
+            .unit(check_unit)
+            .unwrap()
+            .orders
+            .buy_orders
+            .is_empty());
+        assert!(check_game
+            .unit(check_unit)
+            .unwrap()
+            .orders
+            .sell_orders
+            .is_empty());
+
+        let (mut turn_game, turn_faction, _, turn_unit) = game_with_unit();
+        parse_order_file(
+            &mut turn_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\n\
+              buy\nbuy 0 wood\nbuy 1\nsell\nsell 0 iron\nsell 1\n\
+              buy 3 fake\nsell 2 fake\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            turn_game.faction(turn_faction).unwrap().errors,
+            [
+                "Unit (10): BUY: Number to buy not given.",
+                "Unit (10): BUY: Number to buy not given.",
+                "Unit (10): BUY: Item not given.",
+                "Unit (10): SELL: Number to sell not given.",
+                "Unit (10): SELL: Number to sell not given.",
+                "Unit (10): SELL: Item not given."
+            ]
+        );
+        assert_eq!(
+            turn_game.unit(turn_unit).unwrap().orders.buy_orders,
+            [BuyOrder {
+                item: -1,
+                num: 3,
+                ..BuyOrder::default()
+            }]
+        );
+        assert_eq!(
+            turn_game.unit(turn_unit).unwrap().orders.sell_orders,
+            [SellOrder {
+                item: -1,
+                num: 2,
+                ..SellOrder::default()
+            }]
+        );
+    }
+
+    #[test]
+    fn give_take_and_withdraw_parse_amount_classes_exceptions_and_errors() {
+        let (mut game, _, _, unit_id) = game_with_unit();
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\n\
+              give 20 2 wood\ngive 21 unit\ngive 22 all wood except 1\n\
+              take from 23 all wood\nwithdraw wood\nwithdraw 3 iron\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        let unit = game.unit(unit_id).unwrap();
+        assert_eq!(
+            unit.orders.give_orders,
+            [
+                GiveOrder {
+                    item: ItemId::Wood.index() as i32,
+                    amount: 2,
+                    target: Some(OrderUnitId {
+                        unitnum: 20,
+                        ..OrderUnitId::default()
+                    }),
+                    ..GiveOrder::default()
+                },
+                GiveOrder {
+                    item: -1,
+                    amount: -1,
+                    target: Some(OrderUnitId {
+                        unitnum: 21,
+                        ..OrderUnitId::default()
+                    }),
+                    ..GiveOrder::default()
+                },
+                GiveOrder {
+                    item: ItemId::Wood.index() as i32,
+                    amount: -2,
+                    except: 1,
+                    target: Some(OrderUnitId {
+                        unitnum: 22,
+                        ..OrderUnitId::default()
+                    }),
+                    ..GiveOrder::default()
+                },
+                GiveOrder {
+                    order: Order::new(OrderVerb::Take),
+                    item: ItemId::Wood.index() as i32,
+                    amount: -2,
+                    target: Some(OrderUnitId {
+                        unitnum: 23,
+                        ..OrderUnitId::default()
+                    }),
+                    ..GiveOrder::take()
+                }
+            ]
+        );
+        assert_eq!(
+            unit.orders.withdraw_orders,
+            [
+                WithdrawOrder {
+                    item: ItemId::Wood.index() as i32,
+                    amount: 1,
+                    ..WithdrawOrder::default()
+                },
+                WithdrawOrder {
+                    item: ItemId::Iron.index() as i32,
+                    amount: 3,
+                    ..WithdrawOrder::default()
+                }
+            ]
+        );
+    }
+
+    #[test]
+    fn give_all_item_classes_accept_cpp_aliases() {
+        let (mut game, _, _, unit_id) = game_with_unit();
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let classes = [
+            ("normal", -crate::defs::ItemTypeFlags::NORMAL),
+            ("advanced", -crate::defs::ItemTypeFlags::ADVANCED),
+            ("trade", -crate::defs::ItemTypeFlags::TRADE),
+            ("man", -crate::defs::ItemTypeFlags::MAN),
+            ("men", -crate::defs::ItemTypeFlags::MAN),
+            ("monster", -crate::defs::ItemTypeFlags::MONSTER),
+            ("monsters", -crate::defs::ItemTypeFlags::MONSTER),
+            ("magic", -crate::defs::ItemTypeFlags::MAGIC),
+            ("weapon", -crate::defs::ItemTypeFlags::WEAPON),
+            ("weapons", -crate::defs::ItemTypeFlags::WEAPON),
+            ("armor", -crate::defs::ItemTypeFlags::ARMOR),
+            ("mount", -crate::defs::ItemTypeFlags::MOUNT),
+            ("mounts", -crate::defs::ItemTypeFlags::MOUNT),
+            ("battle", -crate::defs::ItemTypeFlags::BATTLE),
+            ("special", -crate::defs::ItemTypeFlags::SPECIAL),
+            ("food", -crate::defs::ItemTypeFlags::FOOD),
+            ("tool", -crate::defs::ItemTypeFlags::TOOL),
+            ("tools", -crate::defs::ItemTypeFlags::TOOL),
+            ("item", -(crate::defs::NITEMS as i32)),
+            ("items", -(crate::defs::NITEMS as i32)),
+            ("ship", -crate::defs::ItemTypeFlags::SHIP),
+            ("ships", -crate::defs::ItemTypeFlags::SHIP),
+        ];
+        let mut input = String::from("#atlantis 7 none\nunit 10\n");
+        for (index, (token, _)) in classes.iter().enumerate() {
+            input.push_str(&format!("give {} ALL {token}\n", 200 + index));
+        }
+        input.push_str("#end\n");
+
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            input.as_bytes(),
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        let expected = classes
+            .iter()
+            .enumerate()
+            .map(|(index, (_, item))| GiveOrder {
+                item: *item,
+                amount: -2,
+                target: Some(OrderUnitId {
+                    unitnum: 200 + index as i32,
+                    ..OrderUnitId::default()
+                }),
+                ..GiveOrder::default()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(game.unit(unit_id).unwrap().orders.give_orders, expected);
+    }
+
+    #[test]
+    fn exchange_transport_distribute_claim_and_join_parse_valid_and_invalid_forms() {
+        let (mut game, faction_id, object_id, unit_id) = game_with_unit();
+        let no_overload_unit = game
+            .add_unit(object_id, Unit::new(11, Some(faction_id), 0, 0))
+            .unwrap();
+        game.setup_unit_nums().unwrap();
+        game.faction_mut(faction_id).unwrap().unclaimed = 50;
+        game.unit_mut(unit_id)
+            .unwrap()
+            .items
+            .set_num(ItemId::Silver, 10);
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\n\
+              exchange 30 2 wood 3 iron\n\
+              transport 31 all wood except 4\n\
+              distribute 32 5 iron\n\
+              join 33 nooverload\njoin 34 merge\nclaim 20\nclaim 80\n\
+              unit 11\njoin 35 nooverload\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        let unit = game.unit(unit_id).unwrap();
+        assert_eq!(
+            unit.orders.exchange_orders,
+            [ExchangeOrder {
+                give_item: ItemId::Wood.index() as i32,
+                give_amount: 2,
+                expect_item: ItemId::Iron.index() as i32,
+                expect_amount: 3,
+                target: Some(OrderUnitId {
+                    unitnum: 30,
+                    ..OrderUnitId::default()
+                }),
+                ..ExchangeOrder::default()
+            }]
+        );
+        assert_eq!(
+            unit.orders.transport_orders,
+            [
+                TransportOrder {
+                    item: ItemId::Wood.index() as i32,
+                    amount: -1,
+                    except: 4,
+                    target: Some(OrderUnitId {
+                        unitnum: 31,
+                        ..OrderUnitId::default()
+                    }),
+                    ..TransportOrder::default()
+                },
+                TransportOrder {
+                    order: Order::new(OrderVerb::Distribute),
+                    item: ItemId::Iron.index() as i32,
+                    amount: 5,
+                    target: Some(OrderUnitId {
+                        unitnum: 32,
+                        ..OrderUnitId::default()
+                    }),
+                    ..TransportOrder::distribute()
+                }
+            ]
+        );
+        assert_eq!(
+            unit.orders.join_orders,
+            Some(JoinOrder {
+                target: Some(OrderUnitId {
+                    unitnum: 34,
+                    ..OrderUnitId::default()
+                }),
+                overload: 1,
+                merge: 1,
+                ..JoinOrder::default()
+            })
+        );
+        assert_eq!(
+            game.unit(no_overload_unit).unwrap().orders.join_orders,
+            Some(JoinOrder {
+                target: Some(OrderUnitId {
+                    unitnum: 35,
+                    ..OrderUnitId::default()
+                }),
+                overload: 0,
+                ..JoinOrder::default()
+            })
+        );
+        assert_eq!(game.faction(faction_id).unwrap().unclaimed, 0);
+        assert_eq!(
+            game.unit(unit_id).unwrap().items.get_num(ItemId::Silver),
+            60
+        );
+        assert_eq!(
+            game.faction(faction_id).unwrap().events,
+            ["Unit (10): Claims $20.", "Unit (10): Claims $30."]
+        );
+        assert_eq!(
+            game.faction(faction_id).unwrap().errors,
+            ["Unit (10): CLAIM: Don't have that much unclaimed silver."]
+        );
+        assert_eq!(
+            game.faction(faction_id)
+                .unwrap()
+                .items
+                .get_num(ItemId::Silver),
+            2
+        );
+        assert_eq!(
+            game.faction(faction_id).unwrap().item_shows,
+            [crate::model::FactionItemShow {
+                item_type: ItemId::Silver,
+                full: true
+            }]
+        );
+
+        let tables = ruleset.tables();
+        let ship = tables
+            .item_families
+            .items
+            .iter()
+            .find(|item| {
+                item.item_type & crate::defs::ItemTypeFlags::SHIP != 0
+                    && item.flags & crate::defs::ItemFlags::DISABLED == 0
+            })
+            .and_then(|item| item.abbreviation.as_deref())
+            .unwrap();
+        let (mut check_game, check_faction, _, check_unit) = game_with_unit();
+        check_game.faction_mut(check_faction).unwrap().unclaimed = 50;
+        check_game
+            .unit_mut(check_unit)
+            .unwrap()
+            .items
+            .set_num(ItemId::Silver, 10);
+        let input = format!(
+            "#atlantis 7 none\nunit 10\n\
+             exchange\nexchange 30\nexchange 30 1\n\
+             exchange 30 1 {ship} 1 wood\nexchange 30 1 wood\n\
+             exchange 30 1 wood 1\nexchange 30 1 wood 1 {ship}\n\
+             transport\ntransport 31\ntransport 31 all\n\
+             transport 31 all wood except\ntransport 31 all wood except 0\n\
+             transport 31 all fake\ndistribute 32 all fake\n\
+             distribute 32 all wood except\ndistribute 32 all wood except 0\n\
+             join 0\nclaim\nclaim 20\n#end\n"
+        );
+        let check = parse_order_file(
+            &mut check_game,
+            ruleset.game_defs(),
+            input.as_bytes(),
+            OrderParseMode::Check,
+        )
+        .unwrap();
+        assert_eq!(
+            check.errors,
+            [
+                "EXCHANGE: Invalid target.",
+                "EXCHANGE: No amount given.",
+                "EXCHANGE: No item given.",
+                "EXCHANGE: Can't exchange ships.",
+                "EXCHANGE: No amount expected.",
+                "EXCHANGE: No item expected.",
+                "EXCHANGE: Can't exchange ships.",
+                "TRANSPORT: Invalid target.",
+                "TRANSPORT: No amount given.",
+                "TRANSPORT: No item given.",
+                "TRANSPORT: EXCEPT requires a value.",
+                "TRANSPORT: Invalid except value.",
+                "TRANSPORT: Invalid item.",
+                "DISTRIBUTE: Invalid item fake.",
+                "DISTRIBUTE: EXCEPT requires a value.",
+                "DISTRIBUTE: Invalid except value.",
+                "JOIN: No target given.",
+                "CLAIM: No amount given."
+            ]
+        );
+        let faction = check_game.faction(check_faction).unwrap();
+        assert_eq!(faction.unclaimed, 50);
+        assert_eq!(faction.items.get_num(ItemId::Silver), 0);
+        assert!(faction.events.is_empty());
+        assert!(faction.item_shows.is_empty());
+        assert_eq!(
+            check_game
+                .unit(check_unit)
+                .unwrap()
+                .items
+                .get_num(ItemId::Silver),
+            10
+        );
+    }
+
+    #[test]
+    fn give_take_and_withdraw_reject_invalid_forms() {
+        let (mut game, _, _, unit_id) = game_with_unit();
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let check = parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\n\
+              give 20 0 wood\ngive\ntake 20 1 wood\ntake from 0 1 wood\n\
+              give 20\ngive 20 2\ngive 20 1 fake\ngive 20 all fake\n\
+              give 20 all weapon except 1\ngive 20 1 wood except 1\n\
+              give 20 all wood except\ngive 20 all wood except 0\n\
+              give 20 1 unfinished wood\ntake from 20 unit\n\
+              withdraw\nwithdraw 1\nwithdraw 1 silver\n\
+              exchange 30 1 wood 1\ntransport 31 2 fake\n\
+              distribute 32 2 fake\njoin 0\nclaim 0\n#end\n",
+            OrderParseMode::Check,
+        )
+        .unwrap();
+        assert_eq!(
+            check.errors,
+            [
+                "GIVE: Illegal amount given.",
+                "GIVE: Invalid target.",
+                "TAKE: Missing FROM.",
+                "TAKE: Invalid target.",
+                "GIVE: No amount given.",
+                "GIVE: No item given.",
+                "GIVE: Invalid item.",
+                "GIVE: Invalid item or item class.",
+                "GIVE: EXCEPT only valid with specific items.",
+                "GIVE: EXCEPT only valid with ALL",
+                "GIVE: EXCEPT requires a value.",
+                "GIVE: Invalid EXCEPT value.",
+                "GIVE: That item does not have an unfinished version.",
+                "TAKE: Illegal amount given.",
+                "WITHDRAW: No amount given.",
+                "WITHDRAW: No item given.",
+                "WITHDRAW: Invalid item.",
+                "EXCHANGE: No item expected.",
+                "TRANSPORT: Invalid item.",
+                "DISTRIBUTE: Invalid item fake.",
+                "JOIN: No target given.",
+                "CLAIM: No amount given."
+            ]
+        );
+        let unit = game.unit(unit_id).unwrap();
+        assert!(unit.orders.give_orders.is_empty());
+        assert!(unit.orders.withdraw_orders.is_empty());
+        assert!(unit.orders.exchange_orders.is_empty());
+        assert!(unit.orders.transport_orders.is_empty());
+        assert_eq!(unit.orders.join_orders, None);
+        assert_eq!(unit.items.get_num(ItemId::Silver), 0);
+    }
+
+    #[test]
+    fn withdraw_rejects_orders_when_disabled() {
+        let (mut game, _, _, _) = game_with_unit();
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let mut defs = *ruleset.game_defs();
+        defs.allow_withdraw = 0;
+        let check = parse_order_file(
+            &mut game,
+            &defs,
+            b"#atlantis 7 none\nunit 10\nwithdraw wood\n#end\n",
+            OrderParseMode::Check,
+        )
+        .unwrap();
+        assert_eq!(check.errors, ["WITHDRAW is not a valid order."]);
+    }
+
+    #[test]
+    fn production_and_tax_orders_match_month_long_replacement_rules() {
+        let standard = <dyn Ruleset>::from_name("standard").unwrap();
+        let standard_tables = standard.tables();
+        let entertainment_skill = standard_tables
+            .skills
+            .skills
+            .iter()
+            .position(|skill| skill.name == Some("entertainment"))
+            .unwrap() as i32;
+        let enabled_ship = standard_tables
+            .item_families
+            .items
+            .iter()
+            .find(|item| {
+                item.item_type == crate::defs::ItemTypeFlags::SHIP
+                    && item.flags & crate::defs::ItemFlags::DISABLED == 0
+            })
+            .and_then(|item| item.name.as_deref())
+            .unwrap()
+            .to_owned();
+        let (mut standard_game, faction_id, _, unit_id) = game_with_unit();
+
+        parse_order_file(
+            &mut standard_game,
+            standard.game_defs(),
+            b"#atlantis 7 none\nunit 10\n\
+              produce 2 wood\nwork\nentertain\ntax\npillage\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert_eq!(
+            standard_game.faction(faction_id).unwrap().errors,
+            [
+                "Unit (10): WORK: Overwriting previous month-long order.",
+                "Unit (10): ENTERTAIN: Overwriting previous month-long order.",
+                "Unit (10): PILLAGE: The unit is already taxing."
+            ]
+        );
+        assert_eq!(
+            standard_game.unit(unit_id).unwrap().orders.month_orders,
+            Some(OrderData::Produce(ProduceOrder {
+                order: Order::new(OrderVerb::Produce),
+                item: ItemId::Silver.index() as i32,
+                skill: entertainment_skill,
+                target: 0,
+                ..ProduceOrder::default()
+            }))
+        );
+        assert_eq!(standard_game.unit(unit_id).unwrap().taxing, 1);
+
+        let (mut neworigins_game, neworigins_faction, _, neworigins_unit) = game_with_unit();
+        let neworigins = <dyn Ruleset>::from_name("neworigins").unwrap();
+        let neworigins_tables = neworigins.tables();
+        let iron_skill = neworigins_tables.item_families.items[ItemId::Iron.index()]
+            .production_skill
+            .as_deref()
+            .and_then(|skill| {
+                crate::defs::skills::lookup_skill(&neworigins_tables.skills.skills, skill)
+            })
+            .map_or(-1, |skill| skill as i32);
+        parse_order_file(
+            &mut neworigins_game,
+            neworigins.game_defs(),
+            b"#atlantis 7 none\nunit 10\nproduce 1 wood\npillage\nproduce 3 iron\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+
+        assert_eq!(
+            neworigins_game.faction(neworigins_faction).unwrap().errors,
+            [
+                "Unit (10): PILLAGE: Overwriting previous month-long order.",
+                "Unit (10): PRODUCE: Overwriting previous month-long order."
+            ]
+        );
+        assert_eq!(
+            neworigins_game
+                .unit(neworigins_unit)
+                .unwrap()
+                .orders
+                .month_orders,
+            Some(OrderData::Produce(ProduceOrder {
+                item: ItemId::Iron.index() as i32,
+                skill: iron_skill,
+                target: 3,
+                ..ProduceOrder::default()
+            }))
+        );
+        assert_eq!(neworigins_game.unit(neworigins_unit).unwrap().taxing, 0);
+
+        let (mut invalid_game, _, _, invalid_unit) = game_with_unit();
+        let invalid_orders = format!(
+            "#atlantis 7 none\nunit 10\nproduce\nproduce 1\n\
+             produce 1 nonexistent\nproduce 1 {enabled_ship}\n#end\n"
+        );
+        let invalid = parse_order_file(
+            &mut invalid_game,
+            standard.game_defs(),
+            invalid_orders.as_bytes(),
+            OrderParseMode::Check,
+        )
+        .unwrap();
+        assert_eq!(
+            invalid.errors,
+            [
+                "PRODUCE: No item given.",
+                "PRODUCE: No item given.",
+                "PRODUCE: Invalid item.",
+                "PRODUCE: Use BUILD for ships."
+            ]
+        );
+        assert!(invalid_game
+            .unit(invalid_unit)
+            .unwrap()
+            .orders
+            .month_orders
+            .is_none());
+
+        let (mut check_game, check_faction, _, check_unit) = game_with_unit();
+        let mut parser = super::Parser::new(
+            &mut check_game,
+            standard.game_defs(),
+            &standard_tables,
+            OrderParseMode::Check,
+        );
+        parser.faction_id = Some(check_faction);
+        parser.unit_stack.push(check_unit);
+        let mut cursor = 0;
+        let mut pending = std::collections::VecDeque::new();
+        for line in [
+            "produce 2 iron",
+            "turn",
+            "produce 1 wood",
+            "work",
+            "endturn",
+        ] {
+            parser
+                .parse_line(line.to_owned(), &[], &mut cursor, &mut pending)
+                .unwrap();
+        }
+        assert_eq!(
+            parser.result.errors,
+            ["WORK: Overwriting previous DELAYED month-long order."]
+        );
+        assert_eq!(
+            parser.game.unit(check_unit).unwrap().orders.month_orders,
+            Some(OrderData::Produce(ProduceOrder {
+                item: ItemId::Iron.index() as i32,
+                skill: standard_tables.item_families.items[ItemId::Iron.index()]
+                    .production_skill
+                    .as_deref()
+                    .and_then(|skill| {
+                        crate::defs::skills::lookup_skill(&standard_tables.skills.skills, skill)
+                    })
+                    .map_or(-1, |skill| skill as i32),
+                target: 2,
+                ..ProduceOrder::default()
+            }))
+        );
+
+        let (mut turn_game, turn_faction, _, turn_unit) = game_with_unit();
+        let saved_month_order = OrderData::Move(crate::orders::MoveOrder::default());
+        turn_game.unit_mut(turn_unit).unwrap().orders.month_orders =
+            Some(saved_month_order.clone());
+        turn_game.unit_mut(turn_unit).unwrap().taxing = 5;
+        let mut check_defs = *standard.game_defs();
+        check_defs.tax_pillage_month_long = 1;
+        let mut parser = super::Parser::new(
+            &mut turn_game,
+            &check_defs,
+            &standard_tables,
+            OrderParseMode::Check,
+        );
+        parser.faction_id = Some(turn_faction);
+        parser.unit_stack.push(turn_unit);
+        let mut cursor = 0;
+        let mut pending = std::collections::VecDeque::new();
+        for line in ["turn", "tax", "pillage", "endturn"] {
+            parser
+                .parse_line(line.to_owned(), &[], &mut cursor, &mut pending)
+                .unwrap();
+        }
+        assert_eq!(
+            parser.result.errors,
+            ["PILLAGE: The unit is already taxing."]
+        );
+        let restored = parser.game.unit(turn_unit).unwrap();
+        assert_eq!(restored.orders.month_orders, Some(saved_month_order));
+        assert_eq!(restored.taxing, 5);
+        assert_eq!(restored.present_taxing, 0);
+        assert_eq!(restored.orders.in_turn_block, 0);
+    }
+
+    #[test]
+    fn build_orders_parse_build_help_objects_ships_and_errors() {
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let tables = ruleset.tables();
+        let tower = crate::defs::objects::lookup_object("tower", &tables.objects).unwrap();
+        let (mut building_game, building_faction, _, building_unit) = game_with_unit();
+        let region_id = building_game
+            .unit(building_unit)
+            .and_then(|unit| unit.object)
+            .and_then(|object_id| building_game.object(object_id))
+            .and_then(|object| object.region)
+            .unwrap();
+        building_game.region_mut(region_id).unwrap().terrain_type =
+            Some(crate::defs::terrains::R_PLAIN);
+        parse_order_file(
+            &mut building_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nbuild tower\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert!(building_game
+            .faction(building_faction)
+            .unwrap()
+            .errors
+            .is_empty());
+        assert_eq!(
+            building_game
+                .unit(building_unit)
+                .unwrap()
+                .orders
+                .month_orders,
+            Some(OrderData::Build(BuildOrder {
+                new_building: tower as i32,
+                ..BuildOrder::default()
+            }))
+        );
+        assert_eq!(building_game.unit(building_unit).unwrap().orders.build, 0);
+
+        let (mut help_game, _, _, help_unit) = game_with_unit();
+        parse_order_file(
+            &mut help_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nbuild help new 44\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            help_game.unit(help_unit).unwrap().orders.month_orders,
+            Some(OrderData::Build(BuildOrder {
+                target: Some(OrderUnitId {
+                    alias: 44,
+                    ..OrderUnitId::default()
+                }),
+                ..BuildOrder::default()
+            }))
+        );
+
+        let ships = tables
+            .item_families
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| {
+                item.item_type & crate::defs::ItemTypeFlags::SHIP != 0
+                    && item.flags & crate::defs::ItemFlags::DISABLED == 0
+            })
+            .map(|(index, _)| index)
+            .take(2)
+            .collect::<Vec<_>>();
+        assert_eq!(ships.len(), 2);
+        let (mut ship_game, _, _, ship_unit) = game_with_unit();
+        for (index, ship) in ships.iter().enumerate() {
+            ship_game
+                .unit_mut(ship_unit)
+                .unwrap()
+                .items
+                .set_num(ItemId::from_index(*ship).unwrap(), (index + 2) as i32);
+        }
+        parse_order_file(
+            &mut ship_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nbuild\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            ship_game.unit(ship_unit).unwrap().orders.build,
+            -(ships[0] as i32)
+        );
+        assert_eq!(
+            ship_game.unit(ship_unit).unwrap().orders.month_orders,
+            Some(OrderData::Build(BuildOrder {
+                needtocomplete: 2,
+                ..BuildOrder::default()
+            }))
+        );
+
+        let (mut invalid_game, invalid_faction, _, _) = game_with_unit();
+        parse_order_file(
+            &mut invalid_game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\n\
+              build help\nbuild help 0\nbuild no_such_object\n#end\n",
+            OrderParseMode::Turn,
+        )
+        .unwrap();
+        assert_eq!(
+            invalid_game.faction(invalid_faction).unwrap().errors,
+            [
+                "Unit (10): BUILD: Non-existent unit to help.",
+                "Unit (10): BUILD: Non-existent unit to help.",
+                "Unit (10): BUILD: Not a valid object name."
+            ]
+        );
+
+        let ship_name = tables.item_families.items[ships[0]]
+            .name
+            .as_deref()
+            .unwrap()
+            .to_owned();
+        let (mut check_game, check_faction, _, check_unit) = game_with_unit();
+        let mut parser = super::Parser::new(
+            &mut check_game,
+            ruleset.game_defs(),
+            &tables,
+            OrderParseMode::Check,
+        );
+        parser.faction_id = Some(check_faction);
+        parser.unit_stack.push(check_unit);
+        let mut cursor = 0;
+        let mut pending = std::collections::VecDeque::new();
+        parser
+            .parse_line(format!("build {ship_name}"), &[], &mut cursor, &mut pending)
+            .unwrap();
+        assert!(parser.result.errors.is_empty());
+
+        let (mut help_check_game, help_check_faction, _, help_check_unit) = game_with_unit();
+        let mut help_parser = super::Parser::new(
+            &mut help_check_game,
+            ruleset.game_defs(),
+            &tables,
+            OrderParseMode::Check,
+        );
+        help_parser.faction_id = Some(help_check_faction);
+        help_parser.unit_stack.push(help_check_unit);
+        let mut cursor = 0;
+        let mut pending = std::collections::VecDeque::new();
+        help_parser
+            .parse_line("build help 0".to_owned(), &[], &mut cursor, &mut pending)
+            .unwrap();
+        assert!(help_parser.result.errors.is_empty());
+    }
+
+    #[test]
     fn default_work_runs_after_each_real_order_file() {
         let (mut game, faction_id, work_unit, other_work_unit, ordered_unit, npc_unit, nexus_unit) =
             default_work_game();
@@ -3602,7 +5388,7 @@ mod tests {
     }
 
     #[test]
-    fn committed_fixture_orders_parse_without_new_faction_errors() {
+    fn trade_and_transfer_orders_parse_committed_fixture_inputs() {
         macro_rules! fixture {
             ($ruleset:literal, $turn:literal) => {
                 (
@@ -3700,6 +5486,60 @@ mod tests {
                     );
                 }
             }
+
+            match (ruleset_name, turn) {
+                ("standard", "9") => {
+                    assert_eq!(
+                        loaded.game.get_unit(178).unwrap().orders.give_orders,
+                        [
+                            GiveOrder {
+                                item: ItemId::HighElf.index() as i32,
+                                amount: 22,
+                                target: Some(OrderUnitId {
+                                    unitnum: 167,
+                                    ..OrderUnitId::default()
+                                }),
+                                ..GiveOrder::default()
+                            },
+                            GiveOrder {
+                                item: ItemId::Silver.index() as i32,
+                                amount: -2,
+                                target: Some(OrderUnitId {
+                                    unitnum: 167,
+                                    ..OrderUnitId::default()
+                                }),
+                                ..GiveOrder::default()
+                            }
+                        ]
+                    );
+                }
+                ("standard", "13") => {
+                    assert_eq!(
+                        loaded.game.get_unit(164).unwrap().orders.give_orders,
+                        [GiveOrder {
+                            order: Order::new(OrderVerb::Take),
+                            item: ItemId::Silver.index() as i32,
+                            amount: -2,
+                            target: Some(OrderUnitId {
+                                unitnum: 167,
+                                ..OrderUnitId::default()
+                            }),
+                            ..GiveOrder::take()
+                        }]
+                    );
+                }
+                ("neworigins", "4") => {
+                    assert_eq!(
+                        loaded.game.get_unit(52).unwrap().orders.withdraw_orders,
+                        [WithdrawOrder {
+                            item: ItemId::Longbow.index() as i32,
+                            amount: 1,
+                            ..WithdrawOrder::default()
+                        }]
+                    );
+                }
+                _ => {}
+            }
         }
     }
 
@@ -3759,6 +5599,32 @@ mod tests {
             game.faction(faction_id).unwrap().errors,
             ["Unit (1): FORM: cannot nest.", "999 is not your unit."]
         );
+    }
+
+    #[test]
+    fn check_mode_form_month_orders_do_not_leak_after_end() {
+        let (mut game, _, object_id, root_id) = game_with_unit();
+        let ruleset = <dyn Ruleset>::from_name("standard").unwrap();
+        let result = parse_order_file(
+            &mut game,
+            ruleset.game_defs(),
+            b"#atlantis 7 none\nunit 10\nform 1\nwork\nend\n#end\n",
+            OrderParseMode::Check,
+        )
+        .unwrap();
+        assert!(result.errors.is_empty());
+
+        let form_id = game
+            .object(object_id)
+            .unwrap()
+            .unit_ids()
+            .iter()
+            .copied()
+            .find(|unit_id| game.unit(*unit_id).unwrap().former == Some(root_id))
+            .unwrap();
+        let form = game.unit(form_id).unwrap();
+        assert_eq!(form.orders.month_orders, None);
+        assert_eq!(form.taxing, 0);
     }
 
     #[test]
