@@ -140,6 +140,13 @@ impl<R: BufRead> TextInput<R> {
     }
 }
 
+impl<R: BufRead + io::Seek> TextInput<R> {
+    /// Return the current byte offset for a seekable input.
+    pub fn position(&mut self) -> io::Result<u64> {
+        self.reader.stream_position()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::TextInput;

@@ -25,6 +25,10 @@ impl ItemList {
             .map_or(0, |item| item.num)
     }
 
+    pub fn push(&mut self, item: Item) {
+        self.entries.push(item);
+    }
+
     /// C++: `items.cpp` `ItemList::SetNum`; zero removes the entry, so re-adding appends it.
     pub fn set_num(&mut self, item_type: ItemId, num: i32) {
         if let Some(index) = self
@@ -38,7 +42,7 @@ impl ItemList {
                 self.entries[index].num = num;
             }
         } else if num != 0 {
-            self.entries.push(Item {
+            self.push(Item {
                 item_type,
                 num,
                 selling: 0,
@@ -70,6 +74,10 @@ impl SkillList {
             .iter()
             .find(|skill| skill.skill_type == skill_type)
             .map_or(0, |skill| skill.days)
+    }
+
+    pub fn push(&mut self, skill: Skill) {
+        self.entries.push(skill);
     }
 
     pub fn set_days(&mut self, skill_type: usize, days: u32) {

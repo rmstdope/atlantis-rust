@@ -298,3 +298,12 @@ fn region_array_rejects_non_hex_cells() {
         Err(RegionArrayError::CoordinateHasNoRegion)
     );
 }
+
+#[test]
+fn nexus_region_array_supports_the_original_single_cell_layout() {
+    let mut array = RegionArray::new(1, 1, RegionLevelType::Nexus).unwrap();
+    let region = RegionId::new(0);
+    array.set_region(0, 0, region).unwrap();
+
+    assert_eq!(array.get_region(0, 0), Some(region));
+}
