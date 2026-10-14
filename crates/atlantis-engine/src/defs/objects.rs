@@ -50,6 +50,60 @@ pub enum BuildTarget {
 
 include!("objects_data.rs");
 
+pub fn object_table_jsonl(objects: &[ObjectDef]) -> String {
+    let mut output = format!(
+        "{{\"table\":\"counts\",\"name\":\"objects\",\"value\":{}}}\n",
+        objects.len()
+    );
+    for (index, object) in objects.iter().enumerate() {
+        let skill = object
+            .skill
+            .map(json_string)
+            .unwrap_or_else(|| "null".to_owned());
+        let defense = object
+            .defense
+            .iter()
+            .map(i32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        output.push_str(&format!(
+            "{{\"table\":\"objects\",\"index\":{index},\"name\":{},\"flags\":{},\"protection\":{},\"capacity\":{},\"sailors\":{},\"maximum_mages\":{},\"item\":{},\"cost\":{},\"skill\":{},\"level\":{},\"maximum_maintenance\":{},\"maximum_monthly_decay\":{},\"maintenance_factor\":{},\"monster\":{},\"production_aided\":{},\"defense\":[{defense}]}}\n",
+            json_string(object.name),
+            object.flags,
+            object.protection,
+            object.capacity,
+            object.sailors,
+            object.maximum_mages,
+            object.item,
+            object.cost,
+            skill,
+            object.level,
+            object.maximum_maintenance,
+            object.maximum_monthly_decay,
+            object.maintenance_factor,
+            object.monster,
+            object.production_aided,
+        ));
+    }
+    output
+}
+
+fn json_string(value: &str) -> String {
+    let mut result = String::from("\"");
+    for character in value.chars() {
+        match character {
+            '"' => result.push_str("\\\""),
+            '\\' => result.push_str("\\\\"),
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            character => result.push(character),
+        }
+    }
+    result.push('"');
+    result
+}
+
 /// C++: `object.cpp` `LookupObject`. It deliberately does not filter disabled entries.
 pub fn lookup_object(token: &str, object_defs: &[ObjectDef]) -> Option<ObjectId> {
     object_defs
@@ -116,59 +170,12 @@ mod tests {
         }
     }
 
-    fn json_string(value: &str) -> String {
-        let mut result = String::from("\"");
-        for character in value.chars() {
-            match character {
-                '"' => result.push_str("\\\""),
-                '\\' => result.push_str("\\\\"),
-                '\n' => result.push_str("\\n"),
-                '\r' => result.push_str("\\r"),
-                '\t' => result.push_str("\\t"),
-                character => result.push(character),
-            }
-        }
-        result.push('"');
-        result
-    }
-
-    fn object_row(index: usize, object: &ObjectDef) -> String {
-        let skill = object
-            .skill
-            .map(json_string)
-            .unwrap_or_else(|| "null".to_owned());
-        let defense = object
-            .defense
-            .iter()
-            .map(i32::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        format!(
-            "{{\"table\":\"objects\",\"index\":{index},\"name\":{},\"flags\":{},\"protection\":{},\"capacity\":{},\"sailors\":{},\"maximum_mages\":{},\"item\":{},\"cost\":{},\"skill\":{},\"level\":{},\"maximum_maintenance\":{},\"maximum_monthly_decay\":{},\"maintenance_factor\":{},\"monster\":{},\"production_aided\":{},\"defense\":[{defense}]}}",
-            json_string(object.name),
-            object.flags,
-            object.protection,
-            object.capacity,
-            object.sailors,
-            object.maximum_mages,
-            object.item,
-            object.cost,
-            skill,
-            object.level,
-            object.maximum_maintenance,
-            object.maximum_monthly_decay,
-            object.maintenance_factor,
-            object.monster,
-            object.production_aided,
-        )
-    }
-
     #[test]
     fn object_defaults_match_standard_reference() {
-        let actual = OBJECT_DEFS
-            .iter()
-            .enumerate()
-            .map(|(index, object)| object_row(index, object))
+        let actual = object_table_jsonl(&OBJECT_DEFS)
+            .lines()
+            .skip(1)
+            .map(str::to_owned)
             .collect::<Vec<_>>();
         let expected = include_str!("../../../../fixtures/tables/standard.jsonl")
             .lines()

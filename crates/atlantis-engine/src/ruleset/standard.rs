@@ -1,6 +1,12 @@
 use crate::defs::{
     enums::{BattleLogLevel, DestroyBehavior, FactionActivityRules},
-    GameDefs,
+    modify::TableModifier,
+    objects::{
+        O_AMINE, O_DERELICT, O_ISLE, O_MQUARRY, O_OCAVE, O_PRESERVE, O_ROADN, O_ROADNE, O_ROADNW,
+        O_ROADS, O_ROADSE, O_ROADSW, O_SACGROVE, O_TEMPLE, O_WHIRL,
+    },
+    terrains::R_NEXUS,
+    GameDefs, ItemId,
 };
 use crate::version::AtlVersion;
 
@@ -199,5 +205,87 @@ impl Ruleset for Standard {
 
     fn faction_types(&self) -> &'static [&'static str] {
         FACTION_TYPES
+    }
+
+    fn apply_rule_table_modifications(&self, modifier: &mut TableModifier<'_>) {
+        macro_rules! enable_item {
+            ($item:ident) => {
+                modifier.enable_item(ItemId::$item.index() as i32)
+            };
+        }
+
+        let defs = self.game_defs();
+        if defs.nexus_is_city != 0 && defs.towns_exist != 0 {
+            modifier.clear_terrain_races(R_NEXUS as i32);
+            modifier.modify_terrain_race(R_NEXUS as i32, 0, ItemId::HighElf.index() as i32);
+            modifier.modify_terrain_race(R_NEXUS as i32, 1, ItemId::Viking.index() as i32);
+            modifier.modify_terrain_race(R_NEXUS as i32, 2, ItemId::Plainsman.index() as i32);
+            modifier.clear_terrain_items(R_NEXUS as i32);
+            modifier.modify_terrain_items(R_NEXUS as i32, 0, ItemId::Iron.index() as i32, 100, 10);
+            modifier.modify_terrain_items(R_NEXUS as i32, 1, ItemId::Wood.index() as i32, 100, 10);
+            modifier.modify_terrain_items(R_NEXUS as i32, 2, ItemId::Stone.index() as i32, 100, 10);
+            modifier.modify_terrain_economy(R_NEXUS as i32, 1000, 15, 50, 2);
+        }
+
+        enable_item!(Pick);
+        enable_item!(Spear);
+        enable_item!(Axe);
+        enable_item!(Hammer);
+        enable_item!(Mcrossbow);
+        enable_item!(Mwagon);
+        enable_item!(Glider);
+        enable_item!(Net);
+        enable_item!(Lasso);
+        enable_item!(Bag);
+        enable_item!(Spinning);
+        enable_item!(LeatherArmor);
+        enable_item!(ClothArmor);
+        enable_item!(Boots);
+        enable_item!(Baxe);
+        enable_item!(Mbaxe);
+        enable_item!(Imarm);
+        enable_item!(Superbow);
+        enable_item!(Lance);
+        enable_item!(Javelin);
+        enable_item!(Pike);
+
+        modifier.enable_skill(modifier.skill_id("armorcraft"));
+        modifier.enable_skill(modifier.skill_id("weaponcraft"));
+
+        for object in [
+            O_ROADN, O_ROADNE, O_ROADNW, O_ROADS, O_ROADSE, O_ROADSW, O_TEMPLE, O_MQUARRY, O_AMINE,
+            O_PRESERVE, O_SACGROVE,
+        ] {
+            modifier.enable_object(object as i32);
+        }
+        for object in [O_ISLE, O_DERELICT, O_OCAVE, O_WHIRL] {
+            modifier.enable_object(object as i32);
+        }
+        for item in [
+            ItemId::Pirates,
+            ItemId::Kraken,
+            ItemId::Merfolk,
+            ItemId::Elemental,
+        ] {
+            modifier.enable_item(item.index() as i32);
+        }
+
+        if defs.underdeep_levels > 0 || defs.underworld_levels > 1 {
+            for item in [
+                ItemId::Mushroom,
+                ItemId::HealPotion,
+                ItemId::Roughgem,
+                ItemId::Gems,
+            ] {
+                modifier.enable_item(item.index() as i32);
+            }
+            modifier.enable_skill(modifier.skill_id("GEMC"));
+        }
+
+        modifier.modify_item_production_booster(
+            ItemId::Axe.index() as i32,
+            ItemId::Hammer.index() as i32,
+            1,
+        );
     }
 }
