@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::defs::{self, ItemId, TerrainId};
+use crate::orders::UnitOrders;
 
 use super::{FactionId, ObjectId, RegionId, UnitId};
 use super::{ItemList, SkillList};
@@ -480,6 +481,8 @@ pub struct Unit {
     pub ready_weapon: [i32; 4],
     pub ready_armor: [i32; 4],
     pub old_orders: Vec<String>,
+    #[serde(skip)]
+    pub orders: UnitOrders,
     pub needed: i32,
     pub hunger: i32,
     pub stomach_space: i32,
@@ -515,7 +518,7 @@ impl Default for Unit {
             flags: 0x0002,
             taxing: 0,
             movepoints: 0,
-            canattack: 0,
+            canattack: 1,
             nomove: 0,
             routed: 0,
             skills: SkillList::default(),
@@ -525,6 +528,7 @@ impl Default for Unit {
             ready_weapon: [-1; 4],
             ready_armor: [-1; 4],
             old_orders: Vec::new(),
+            orders: UnitOrders::default(),
             needed: 0,
             hunger: 0,
             stomach_space: 0,
@@ -562,5 +566,118 @@ impl Unit {
             movepoints: default_move_points,
             ..Self::default()
         }
+    }
+
+    /// C++: `unit.cpp` `Unit::ClearOrders`.
+    pub fn clear_orders(&mut self) {
+        self.canattack = 1;
+        self.nomove = 0;
+        self.routed = 0;
+        self.orders.enter = 0;
+        self.orders.build = 0;
+        self.orders.destroy = 0;
+        self.orders.attack_orders = None;
+        self.orders.evict_orders = None;
+        self.orders.steal_orders = None;
+        self.orders.promote = None;
+        self.taxing = 0;
+        self.advance_from = None;
+        self.orders.month_orders = None;
+        self.orders.in_turn_block = 0;
+        self.present_taxing = 0;
+        self.orders.present_month_orders = None;
+        self.orders.cast_orders = None;
+        self.orders.teleport_orders = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Unit;
+    use crate::model::RegionId;
+    use crate::orders::{
+        AssassinateOrder, AttackOrder, BuyOrder, CastOrder, CastOrderData, ExchangeOrder,
+        FindOrder, ForgetOrder, GiveOrder, JoinOrder, MoveOrder, Order, OrderData, OrderUnitId,
+        SellOrder, StealOrderData, TeleportOrder, TransportOrder, TurnOrder, UnitOrders,
+        WithdrawOrder,
+    };
+
+    #[test]
+    fn clear_orders_resets_cpp_order_slots_without_dropping_retained_queues() {
+        assert_eq!(Unit::default().canattack, 1);
+
+        let mut unit = Unit {
+            canattack: 0,
+            nomove: 1,
+            routed: 1,
+            taxing: 7,
+            advance_from: Some(RegionId::new(4)),
+            present_taxing: 3,
+            orders: UnitOrders {
+                destroy: 1,
+                enter: 2,
+                build: 3,
+                promote: Some(OrderUnitId {
+                    unitnum: 0,
+                    alias: 9,
+                    faction: 0,
+                }),
+                find_orders: vec![FindOrder {
+                    find: 1,
+                    ..FindOrder::default()
+                }],
+                give_orders: vec![GiveOrder::default()],
+                withdraw_orders: vec![WithdrawOrder::default()],
+                bank_orders: vec![Order::default()],
+                buy_orders: vec![BuyOrder::default()],
+                sell_orders: vec![SellOrder::default()],
+                forget_orders: vec![ForgetOrder::default()],
+                cast_orders: Some(CastOrderData::Cast(CastOrder::default())),
+                teleport_orders: Some(TeleportOrder::default()),
+                steal_orders: Some(StealOrderData::Assassinate(AssassinateOrder::default())),
+                month_orders: Some(OrderData::Move(MoveOrder::default())),
+                attack_orders: Some(AttackOrder::default()),
+                evict_orders: Some(crate::orders::EvictOrder::default()),
+                exchange_orders: vec![ExchangeOrder::default()],
+                turn_orders: vec![TurnOrder::default()],
+                in_turn_block: 1,
+                present_month_orders: Some(OrderData::Move(MoveOrder::default())),
+                transport_orders: vec![TransportOrder::default()],
+                join_orders: Some(JoinOrder::default()),
+            },
+            ..Unit::default()
+        };
+
+        unit.clear_orders();
+
+        assert_eq!(unit.canattack, 1);
+        assert_eq!(unit.nomove, 0);
+        assert_eq!(unit.routed, 0);
+        assert_eq!(unit.taxing, 0);
+        assert_eq!(unit.advance_from, None);
+        assert_eq!(unit.present_taxing, 0);
+        assert_eq!(unit.orders.destroy, 0);
+        assert_eq!(unit.orders.enter, 0);
+        assert_eq!(unit.orders.build, 0);
+        assert_eq!(unit.orders.promote, None);
+        assert_eq!(unit.orders.attack_orders, None);
+        assert_eq!(unit.orders.evict_orders, None);
+        assert_eq!(unit.orders.steal_orders, None);
+        assert_eq!(unit.orders.month_orders, None);
+        assert_eq!(unit.orders.in_turn_block, 0);
+        assert_eq!(unit.orders.present_month_orders, None);
+        assert_eq!(unit.orders.cast_orders, None);
+        assert_eq!(unit.orders.teleport_orders, None);
+        assert_eq!(unit.orders.find_orders.len(), 1);
+        assert_eq!(unit.orders.give_orders.len(), 1);
+        assert_eq!(unit.orders.withdraw_orders.len(), 1);
+        assert_eq!(unit.orders.bank_orders.len(), 1);
+        assert_eq!(unit.orders.buy_orders.len(), 1);
+        assert_eq!(unit.orders.sell_orders.len(), 1);
+        assert_eq!(unit.orders.forget_orders.len(), 1);
+        assert_eq!(unit.orders.exchange_orders.len(), 1);
+        assert_eq!(unit.orders.turn_orders.len(), 1);
+        assert_eq!(unit.orders.transport_orders.len(), 1);
+        assert_eq!(unit.orders.join_orders, Some(JoinOrder::default()));
     }
 }
