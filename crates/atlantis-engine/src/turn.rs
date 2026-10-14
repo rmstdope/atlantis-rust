@@ -130,9 +130,11 @@ fn default_unit_orders(
 }
 
 fn set_default_work_order(unit: &mut Unit, tax_pillage_month_long: bool) {
-    let mut order = ProduceOrder::default();
-    order.item = ItemId::Silver.index() as i32;
-    order.skill = -1;
+    let mut order = ProduceOrder {
+        item: ItemId::Silver.index() as i32,
+        skill: -1,
+        ..ProduceOrder::default()
+    };
     order.order.quiet = 1;
     unit.orders.month_orders = Some(OrderData::Produce(order));
     if tax_pillage_month_long {
@@ -325,11 +327,11 @@ fn mage_taxers(unit: &Unit, men: i32, tax_flags: i32, tables: &RulesetTables) ->
                 && skill.flags & skill_flags::MAGE_OTHER != 0)
     };
     if tax_flags & flags::TAX_MAGE_COMBAT_SPELL != 0 {
-        return usize::try_from(unit.combat)
-            .ok()
-            .is_some_and(tax_spell)
-            .then_some(men)
-            .unwrap_or(0);
+        return if usize::try_from(unit.combat).ok().is_some_and(tax_spell) {
+            men
+        } else {
+            0
+        };
     }
     if unit
         .skills
@@ -461,8 +463,10 @@ fn wandering_monster_orders(
     let direction_index = rng.get_random(directions.len() as i32) as usize;
     let direction = directions[direction_index];
     if direction >= 0 {
-        let mut order = MoveOrder::default();
-        order.advancing = i32::from(rng.get_random(100) < aggression);
+        let mut order = MoveOrder {
+            advancing: i32::from(rng.get_random(100) < aggression),
+            ..MoveOrder::default()
+        };
         order.dirs.push(MoveDir { dir: direction });
         unit.orders.month_orders = Some(OrderData::Move(order));
     }
