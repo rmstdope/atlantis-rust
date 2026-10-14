@@ -1,0 +1,57 @@
+--- a/gameio.h
++++ b/gameio.h
+@@ -52,5 +52,6 @@
+ void seedrandom(int);
+ void seedrandomrandom();
++void trace_random_marker(const char *);
+ 
+ int makeRoll(int rolls, int sides);
+ int clamp(int min, int value, int max);
+--- a/gameio.cpp
++++ b/gameio.cpp
+@@ -87,5 +87,28 @@
+ 	}
+ }
+ 
++void trace_random_marker(const char *marker)
++{
++	const char *path = getenv("ATLANTIS_RNG_TRACE");
++	if (!path || !*path) return;
++
++	FILE *trace = fopen(path, "a");
++	if (!trace) {
++		perror("ATLANTIS_RNG_TRACE");
++		exit(EXIT_FAILURE);
++	}
++	if (fprintf(trace, "# %s\n", marker) < 0) {
++		int saved_errno = errno;
++		fclose(trace);
++		errno = saved_errno;
++		perror(path);
++		exit(EXIT_FAILURE);
++	}
++	if (fclose(trace) != 0) {
++		perror(path);
++		exit(EXIT_FAILURE);
++	}
++}
++
+ int getrandom(int range)
+ {
+--- a/game.cpp
++++ b/game.cpp
+@@ -36,6 +36,7 @@
+ #include "astring.h"
+ #include "gamedata.h"
+ #include "quests.h"
++#include "gameio.h"
+ 
+ Game::Game()
+ {
+@@ -1128,6 +1129,7 @@
+ 			pReg->DefaultOrders();
+ 	}
++	trace_random_marker("PreProcessTurn complete");
+ }
+ 
+ void Game::ClearOrders(Faction *f)

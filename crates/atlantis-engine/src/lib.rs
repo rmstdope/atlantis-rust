@@ -13,6 +13,7 @@ pub mod rng;
 pub mod ruleset;
 pub mod save;
 pub mod text;
+pub mod turn;
 pub mod version;
 pub mod world;
 
