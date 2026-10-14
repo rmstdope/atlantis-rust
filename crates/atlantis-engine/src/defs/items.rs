@@ -698,7 +698,7 @@ impl Tables {
         let race = self.races.get(race_index)?;
         let abbreviation = race.abbreviation.as_deref()?;
         self.items.iter().position(|item| {
-            item.item_type == ItemTypeFlags::MAN
+            item.item_type & ItemTypeFlags::MAN != 0
                 && item
                     .abbreviation
                     .as_deref()

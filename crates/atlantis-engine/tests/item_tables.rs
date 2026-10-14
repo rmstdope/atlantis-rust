@@ -156,3 +156,21 @@ fn item_family_finders_match_cpp_string_equality() {
         .find_battle_item(&battle_item.to_ascii_lowercase())
         .is_some());
 }
+
+#[test]
+fn race_item_finder_accepts_combined_man_flags() {
+    let tables = Tables::default();
+    let race_index = tables
+        .races
+        .iter()
+        .position(|race| race.abbreviation.as_deref() == Some("LEAD"))
+        .expect("reference data has the LEAD race");
+
+    assert_ne!(
+        tables.items[0].item_type,
+        ItemTypeFlags::MAN,
+        "LEAD item combines MAN with another type flag"
+    );
+    assert_ne!(tables.items[0].item_type & ItemTypeFlags::MAN, 0);
+    assert_eq!(tables.find_race_item_index(race_index), Some(0));
+}
