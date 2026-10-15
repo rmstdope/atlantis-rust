@@ -1,0 +1,48 @@
+<html><body style="font-family:sans-serif;max-width:900px;margin:20px auto"><h2>atlantis check — agreed shape</h2><p>The check file content is byte-identical to the original. The screen output, the optional CHECKFILE and the exit codes are agreed departures from the original.</p><p>Exit codes: 0 no errors, 1 errors found in the orders, 2 the check could not run.</p><pre style="background:#111;color:#ddd;padding:14px;font-size:13px;line-height:1.35">
+$ atlantis check orders.3 check.3
+Checked orders.3 against NewOrigins rules: 2 errors. Result written to check.3
+<span style="color:#c88">(exit code 1)</span>
+<span style="color:#8c8">(check.3 is replaced if it already exists)</span>
+
+$ atlantis check clean.3 check.3
+Checked clean.3 against NewOrigins rules: no errors. Result written to check.3
+<span style="color:#8c8">(exit code 0)</span>
+
+$ atlantis check one.3 check.3
+Checked one.3 against NewOrigins rules: 1 error. Result written to check.3
+<span style="color:#c88">(exit code 1)</span>
+
+$ atlantis check orders.3
+<span style="color:#8c8">(the check result itself, ending in its own "2 errors found!" line — nothing else, so it can be piped)</span>
+<span style="color:#c88">(exit code 1)</span>
+
+$ atlantis check missing.txt check.3
+error: there is no orders file missing.txt
+<span style="color:#c88">(exit code 2)</span>
+
+$ atlantis check orders.3 /nowhere/check.3
+error: could not write /nowhere/check.3
+<span style="color:#c88">(exit code 2)</span>
+
+$ atlantis check orders.3 check.3          <span style="color:#8c8"># no game.in in this folder</span>
+error: no game.in here to tell which rules to check against. Add --ruleset standard or --ruleset neworigins
+<span style="color:#c88">(exit code 2)</span>
+
+$ atlantis check orders.3 check.3 --ruleset elves
+error: unknown ruleset elves. Use --ruleset standard or --ruleset neworigins
+<span style="color:#c88">(exit code 2)</span>
+
+$ atlantis check
+error: an orders file is required. Try: atlantis check --help
+<span style="color:#c88">(exit code 2)</span>
+
+$ atlantis check --help
+Usage: atlantis check ORDERFILE [CHECKFILE] [--ruleset standard|neworigins]
+  Checks an orders file without running a turn. The result (each order echoed back,
+  errors marked *** Error: ... ***) goes to CHECKFILE, or to the screen if it is left out.
+  The rules come from game.in in this folder unless --ruleset is given.
+
+$ atlantis --help
+Usage: atlantis &lt;command&gt; ...
+Commands: new, edit, check
+</pre></body></html>
