@@ -176,7 +176,11 @@ fn default_seed() -> Result<i32, String> {
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("could not read the system clock: {error}"))?
         .as_secs();
-    i32::try_from(seconds).map_err(|_| "system clock is outside the seed range".to_owned())
+    Ok(seed_from_unix_seconds(seconds))
+}
+
+fn seed_from_unix_seconds(seconds: u64) -> i32 {
+    seconds as i32
 }
 
 fn fail(message: &str) -> i32 {
@@ -191,4 +195,14 @@ fn print_help() {
          Defaults: 64x64 map, a single-hex nexus, and the classic generator.\n\
          Generator 2 is the NewOrigins natural generator."
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::seed_from_unix_seconds;
+
+    #[test]
+    fn default_seed_narrows_epoch_seconds_like_cpp_int() {
+        assert_eq!(seed_from_unix_seconds(i32::MAX as u64 + 1), i32::MIN);
+    }
 }
