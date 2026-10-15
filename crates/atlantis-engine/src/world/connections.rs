@@ -907,12 +907,41 @@ mod tests {
         let mut rng = Rng::new(424242);
         make_shaft_links(&mut game, small_underworld, surface, 1, ruleset, &mut rng)
             .expect("scaled shafts");
+        let surface_array = game.region_arrays[surface].clone();
+        let mut scaled_links = Vec::new();
+        for y in 0..surface_array.y {
+            for x in 0..surface_array.x {
+                let Some(target_region_id) = surface_array.get_region(x, y) else {
+                    continue;
+                };
+                let target = game.region(target_region_id).unwrap();
+                let Some(object_id) = target.object_ids().first().copied() else {
+                    continue;
+                };
+                let shaft = game.object(object_id).unwrap();
+                scaled_links.push((target.num, shaft.inner, shaft.num));
+            }
+        }
+        scaled_links.sort_unstable();
+        assert_eq!(
+            scaled_links,
+            [
+                (1, 38, 1),
+                (6, 33, 1),
+                (8, 32, 1),
+                (9, 34, 1),
+                (18, 37, 1),
+                (19, 35, 1),
+                (20, 36, 1),
+                (31, 39, 1),
+            ]
+        );
+
         make_shaft_links(&mut game, large_underworld, surface, 1, ruleset, &mut rng)
             .expect("full-size shafts");
 
         let small_source_array = game.region_arrays[small_underworld].clone();
         let large_source_array = game.region_arrays[large_underworld].clone();
-        let surface_array = game.region_arrays[surface].clone();
         let mut small_source_nums = Vec::new();
         for y in 0..small_source_array.y {
             for x in 0..small_source_array.x {
