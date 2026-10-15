@@ -1,0 +1,817 @@
+{
+  "format": "atlantis-neworigins-natural-world-stats-v1",
+  "width": 64,
+  "height": 64,
+  "biomes": [
+    "tundra",
+    "mountains",
+    "swamp",
+    "forest",
+    "plains",
+    "jungle",
+    "desert",
+    "water"
+  ],
+  "worlds": [
+    {
+      "seed": 1,
+      "biome_counts": [
+        100,
+        208,
+        7,
+        40,
+        117,
+        64,
+        1316,
+        196
+      ],
+      "river_count": 46,
+      "river_region_count": 271,
+      "settlement_count": 71
+    },
+    {
+      "seed": 2,
+      "biome_counts": [
+        105,
+        206,
+        6,
+        50,
+        110,
+        50,
+        1326,
+        195
+      ],
+      "river_count": 36,
+      "river_region_count": 268,
+      "settlement_count": 96
+    },
+    {
+      "seed": 3,
+      "biome_counts": [
+        113,
+        193,
+        6,
+        51,
+        115,
+        52,
+        1310,
+        208
+      ],
+      "river_count": 42,
+      "river_region_count": 241,
+      "settlement_count": 86
+    },
+    {
+      "seed": 4,
+      "biome_counts": [
+        68,
+        206,
+        8,
+        48,
+        117,
+        40,
+        1357,
+        204
+      ],
+      "river_count": 40,
+      "river_region_count": 266,
+      "settlement_count": 79
+    },
+    {
+      "seed": 5,
+      "biome_counts": [
+        85,
+        206,
+        8,
+        48,
+        131,
+        59,
+        1303,
+        208
+      ],
+      "river_count": 47,
+      "river_region_count": 268,
+      "settlement_count": 83
+    },
+    {
+      "seed": 6,
+      "biome_counts": [
+        62,
+        204,
+        8,
+        55,
+        119,
+        58,
+        1339,
+        203
+      ],
+      "river_count": 45,
+      "river_region_count": 267,
+      "settlement_count": 91
+    },
+    {
+      "seed": 7,
+      "biome_counts": [
+        108,
+        206,
+        10,
+        48,
+        108,
+        46,
+        1317,
+        205
+      ],
+      "river_count": 42,
+      "river_region_count": 258,
+      "settlement_count": 70
+    },
+    {
+      "seed": 8,
+      "biome_counts": [
+        105,
+        205,
+        12,
+        52,
+        120,
+        52,
+        1296,
+        206
+      ],
+      "river_count": 49,
+      "river_region_count": 281,
+      "settlement_count": 78
+    },
+    {
+      "seed": 9,
+      "biome_counts": [
+        123,
+        197,
+        7,
+        60,
+        105,
+        75,
+        1277,
+        204
+      ],
+      "river_count": 43,
+      "river_region_count": 282,
+      "settlement_count": 86
+    },
+    {
+      "seed": 10,
+      "biome_counts": [
+        118,
+        207,
+        5,
+        57,
+        135,
+        55,
+        1263,
+        208
+      ],
+      "river_count": 53,
+      "river_region_count": 288,
+      "settlement_count": 75
+    },
+    {
+      "seed": 11,
+      "biome_counts": [
+        120,
+        208,
+        5,
+        60,
+        138,
+        59,
+        1256,
+        202
+      ],
+      "river_count": 48,
+      "river_region_count": 263,
+      "settlement_count": 94
+    },
+    {
+      "seed": 12,
+      "biome_counts": [
+        133,
+        203,
+        6,
+        49,
+        134,
+        55,
+        1269,
+        199
+      ],
+      "river_count": 46,
+      "river_region_count": 255,
+      "settlement_count": 99
+    },
+    {
+      "seed": 13,
+      "biome_counts": [
+        128,
+        209,
+        8,
+        53,
+        152,
+        59,
+        1231,
+        208
+      ],
+      "river_count": 48,
+      "river_region_count": 273,
+      "settlement_count": 88
+    },
+    {
+      "seed": 14,
+      "biome_counts": [
+        126,
+        198,
+        5,
+        50,
+        96,
+        64,
+        1305,
+        204
+      ],
+      "river_count": 45,
+      "river_region_count": 255,
+      "settlement_count": 73
+    },
+    {
+      "seed": 15,
+      "biome_counts": [
+        107,
+        205,
+        8,
+        57,
+        101,
+        61,
+        1309,
+        200
+      ],
+      "river_count": 47,
+      "river_region_count": 247,
+      "settlement_count": 79
+    },
+    {
+      "seed": 16,
+      "biome_counts": [
+        100,
+        202,
+        2,
+        50,
+        127,
+        66,
+        1294,
+        207
+      ],
+      "river_count": 50,
+      "river_region_count": 270,
+      "settlement_count": 69
+    },
+    {
+      "seed": 17,
+      "biome_counts": [
+        96,
+        207,
+        7,
+        38,
+        104,
+        93,
+        1301,
+        202
+      ],
+      "river_count": 43,
+      "river_region_count": 282,
+      "settlement_count": 79
+    },
+    {
+      "seed": 18,
+      "biome_counts": [
+        133,
+        212,
+        14,
+        65,
+        101,
+        67,
+        1250,
+        206
+      ],
+      "river_count": 39,
+      "river_region_count": 259,
+      "settlement_count": 82
+    },
+    {
+      "seed": 19,
+      "biome_counts": [
+        114,
+        212,
+        10,
+        51,
+        85,
+        56,
+        1320,
+        200
+      ],
+      "river_count": 41,
+      "river_region_count": 254,
+      "settlement_count": 82
+    },
+    {
+      "seed": 20,
+      "biome_counts": [
+        120,
+        197,
+        2,
+        44,
+        114,
+        49,
+        1319,
+        203
+      ],
+      "river_count": 51,
+      "river_region_count": 294,
+      "settlement_count": 83
+    },
+    {
+      "seed": 21,
+      "biome_counts": [
+        80,
+        207,
+        5,
+        53,
+        130,
+        47,
+        1322,
+        204
+      ],
+      "river_count": 42,
+      "river_region_count": 285,
+      "settlement_count": 87
+    },
+    {
+      "seed": 22,
+      "biome_counts": [
+        94,
+        207,
+        10,
+        51,
+        109,
+        55,
+        1318,
+        204
+      ],
+      "river_count": 55,
+      "river_region_count": 301,
+      "settlement_count": 77
+    },
+    {
+      "seed": 23,
+      "biome_counts": [
+        96,
+        195,
+        1,
+        49,
+        100,
+        56,
+        1352,
+        199
+      ],
+      "river_count": 55,
+      "river_region_count": 284,
+      "settlement_count": 89
+    },
+    {
+      "seed": 24,
+      "biome_counts": [
+        136,
+        198,
+        5,
+        51,
+        134,
+        53,
+        1273,
+        198
+      ],
+      "river_count": 46,
+      "river_region_count": 243,
+      "settlement_count": 95
+    },
+    {
+      "seed": 25,
+      "biome_counts": [
+        149,
+        208,
+        12,
+        66,
+        115,
+        59,
+        1233,
+        206
+      ],
+      "river_count": 48,
+      "river_region_count": 300,
+      "settlement_count": 80
+    },
+    {
+      "seed": 26,
+      "biome_counts": [
+        81,
+        205,
+        5,
+        55,
+        113,
+        45,
+        1344,
+        200
+      ],
+      "river_count": 50,
+      "river_region_count": 300,
+      "settlement_count": 77
+    },
+    {
+      "seed": 27,
+      "biome_counts": [
+        113,
+        202,
+        5,
+        44,
+        112,
+        54,
+        1317,
+        201
+      ],
+      "river_count": 37,
+      "river_region_count": 261,
+      "settlement_count": 93
+    },
+    {
+      "seed": 28,
+      "biome_counts": [
+        136,
+        206,
+        5,
+        60,
+        109,
+        74,
+        1250,
+        208
+      ],
+      "river_count": 59,
+      "river_region_count": 297,
+      "settlement_count": 86
+    },
+    {
+      "seed": 29,
+      "biome_counts": [
+        73,
+        199,
+        11,
+        60,
+        127,
+        68,
+        1302,
+        208
+      ],
+      "river_count": 61,
+      "river_region_count": 318,
+      "settlement_count": 77
+    },
+    {
+      "seed": 30,
+      "biome_counts": [
+        119,
+        199,
+        4,
+        55,
+        129,
+        66,
+        1266,
+        210
+      ],
+      "river_count": 45,
+      "river_region_count": 263,
+      "settlement_count": 87
+    },
+    {
+      "seed": 31,
+      "biome_counts": [
+        94,
+        210,
+        9,
+        52,
+        119,
+        71,
+        1278,
+        215
+      ],
+      "river_count": 57,
+      "river_region_count": 320,
+      "settlement_count": 89
+    },
+    {
+      "seed": 32,
+      "biome_counts": [
+        107,
+        209,
+        5,
+        62,
+        118,
+        66,
+        1285,
+        196
+      ],
+      "river_count": 39,
+      "river_region_count": 260,
+      "settlement_count": 112
+    },
+    {
+      "seed": 33,
+      "biome_counts": [
+        97,
+        209,
+        8,
+        23,
+        122,
+        61,
+        1329,
+        199
+      ],
+      "river_count": 47,
+      "river_region_count": 292,
+      "settlement_count": 83
+    },
+    {
+      "seed": 34,
+      "biome_counts": [
+        158,
+        204,
+        9,
+        51,
+        101,
+        58,
+        1256,
+        211
+      ],
+      "river_count": 40,
+      "river_region_count": 257,
+      "settlement_count": 78
+    },
+    {
+      "seed": 35,
+      "biome_counts": [
+        103,
+        202,
+        4,
+        46,
+        111,
+        67,
+        1308,
+        207
+      ],
+      "river_count": 45,
+      "river_region_count": 299,
+      "settlement_count": 75
+    },
+    {
+      "seed": 36,
+      "biome_counts": [
+        75,
+        200,
+        5,
+        47,
+        120,
+        61,
+        1336,
+        204
+      ],
+      "river_count": 51,
+      "river_region_count": 307,
+      "settlement_count": 90
+    },
+    {
+      "seed": 37,
+      "biome_counts": [
+        128,
+        205,
+        9,
+        62,
+        97,
+        60,
+        1277,
+        210
+      ],
+      "river_count": 45,
+      "river_region_count": 283,
+      "settlement_count": 73
+    },
+    {
+      "seed": 38,
+      "biome_counts": [
+        98,
+        202,
+        6,
+        59,
+        122,
+        64,
+        1282,
+        215
+      ],
+      "river_count": 41,
+      "river_region_count": 256,
+      "settlement_count": 83
+    },
+    {
+      "seed": 39,
+      "biome_counts": [
+        102,
+        206,
+        5,
+        59,
+        125,
+        55,
+        1281,
+        215
+      ],
+      "river_count": 50,
+      "river_region_count": 269,
+      "settlement_count": 93
+    },
+    {
+      "seed": 40,
+      "biome_counts": [
+        104,
+        198,
+        2,
+        64,
+        119,
+        54,
+        1300,
+        207
+      ],
+      "river_count": 38,
+      "river_region_count": 246,
+      "settlement_count": 83
+    },
+    {
+      "seed": 41,
+      "biome_counts": [
+        109,
+        206,
+        1,
+        48,
+        125,
+        61,
+        1299,
+        199
+      ],
+      "river_count": 42,
+      "river_region_count": 252,
+      "settlement_count": 82
+    },
+    {
+      "seed": 42,
+      "biome_counts": [
+        83,
+        207,
+        9,
+        60,
+        129,
+        59,
+        1291,
+        210
+      ],
+      "river_count": 43,
+      "river_region_count": 251,
+      "settlement_count": 92
+    },
+    {
+      "seed": 43,
+      "biome_counts": [
+        141,
+        206,
+        13,
+        74,
+        102,
+        69,
+        1245,
+        198
+      ],
+      "river_count": 42,
+      "river_region_count": 288,
+      "settlement_count": 95
+    },
+    {
+      "seed": 44,
+      "biome_counts": [
+        135,
+        204,
+        3,
+        61,
+        128,
+        26,
+        1288,
+        203
+      ],
+      "river_count": 42,
+      "river_region_count": 288,
+      "settlement_count": 93
+    },
+    {
+      "seed": 45,
+      "biome_counts": [
+        109,
+        203,
+        6,
+        45,
+        132,
+        80,
+        1265,
+        208
+      ],
+      "river_count": 51,
+      "river_region_count": 298,
+      "settlement_count": 84
+    },
+    {
+      "seed": 46,
+      "biome_counts": [
+        103,
+        211,
+        10,
+        57,
+        119,
+        53,
+        1293,
+        202
+      ],
+      "river_count": 51,
+      "river_region_count": 278,
+      "settlement_count": 91
+    },
+    {
+      "seed": 47,
+      "biome_counts": [
+        107,
+        219,
+        13,
+        50,
+        81,
+        61,
+        1308,
+        209
+      ],
+      "river_count": 40,
+      "river_region_count": 263,
+      "settlement_count": 96
+    },
+    {
+      "seed": 48,
+      "biome_counts": [
+        98,
+        209,
+        6,
+        48,
+        108,
+        38,
+        1340,
+        201
+      ],
+      "river_count": 42,
+      "river_region_count": 277,
+      "settlement_count": 79
+    },
+    {
+      "seed": 49,
+      "biome_counts": [
+        116,
+        203,
+        3,
+        50,
+        105,
+        72,
+        1302,
+        197
+      ],
+      "river_count": 52,
+      "river_region_count": 284,
+      "settlement_count": 83
+    },
+    {
+      "seed": 50,
+      "biome_counts": [
+        87,
+        204,
+        3,
+        58,
+        121,
+        51,
+        1324,
+        200
+      ],
+      "river_count": 45,
+      "river_region_count": 307,
+      "settlement_count": 68
+    }
+  ]
+}

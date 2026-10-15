@@ -97,3 +97,13 @@ worlds for each ruleset, using seeds 1 through 50. It records terrain counts in
 `FinalSetup` state in `fixtures/world-generation/classic-nexus-final-setup.json` and
 `fixtures/world-generation/classic-surface-final-setup.json`. It then updates
 `fixtures/SHA256SUMS`. These fixtures must only be created or refreshed by this C++ recorder.
+
+`record-natural-world-generation.sh` builds the patched reference and generates 50 NewOrigins
+natural 64×64 surface worlds, using seeds 1 through 50. The reference-only
+`ATLANTIS_NATURAL_SEED` override seeds the simplex permutation and river-candidate shuffle;
+`ATLANTIS_NATURAL_STATS` records the eight region-biome counts before river placement, river and
+river-region counts immediately after river generation, and settlement counts after economy setup.
+It builds the disposable reference copy with `-O2` so the river path search completes in a
+reasonable time; the normal reference build flags are unchanged. The recorder writes each seed's raw values to
+`fixtures/world-generation/neworigins-natural-stats.json` and updates `fixtures/SHA256SUMS`.
+This fixture must only be created or refreshed by the C++ recorder.

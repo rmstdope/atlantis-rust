@@ -1,0 +1,60 @@
+--- a/aregion.cpp
++++ b/aregion.cpp
+@@ -35,0 +35,2 @@
++#include <cstdio>
++#include <cstdlib>
+@@ -2937,1 +2939,2 @@
+-	rng.seed( time(0) );
++	const char *seed = std::getenv("ATLANTIS_NATURAL_SEED");
++	rng.seed(seed ? static_cast<unsigned int>(std::strtoul(seed, nullptr, 10)) : time(0));
+@@ -3999,0 +4002,1 @@
++	int naturalBiomeCounts[8] = {};
+@@ -4008,0 +4012,10 @@
++			switch (reg->type) {
++				case R_TUNDRA: ++naturalBiomeCounts[0]; break;
++				case R_MOUNTAIN: ++naturalBiomeCounts[1]; break;
++				case R_SWAMP: ++naturalBiomeCounts[2]; break;
++				case R_FOREST: ++naturalBiomeCounts[3]; break;
++				case R_PLAIN: ++naturalBiomeCounts[4]; break;
++				case R_JUNGLE: ++naturalBiomeCounts[5]; break;
++				case R_DESERT: ++naturalBiomeCounts[6]; break;
++				case R_OCEAN: ++naturalBiomeCounts[7]; break;
++			}
+@@ -4019,0 +4033,12 @@
++	int naturalRiverCount = 0;
++	int naturalRiverRegionCount = 0;
++	if (std::getenv("ATLANTIS_NATURAL_STATS")) {
++		std::vector<int> riverNames;
++		riverNames.reserve(rivers.size());
++		for (const auto &river : rivers)
++			riverNames.push_back(river.second);
++		std::sort(riverNames.begin(), riverNames.end());
++		riverNames.erase(std::unique(riverNames.begin(), riverNames.end()), riverNames.end());
++		naturalRiverCount = (int)riverNames.size();
++		naturalRiverRegionCount = (int)rivers.size();
++	}
+@@ -4032,1 +4058,15 @@
+-	AddHistoricalBuildings(arr, w, h);
++	if (std::getenv("ATLANTIS_NATURAL_STATS")) {
++		int settlements = 0;
++		for (int x = 0; x < w; x++) {
++			for (int y = 0; y < h; y++) {
++				if ((x + y) % 2) continue;
++				if (arr->GetRegion(x, y)->town) ++settlements;
++			}
++		}
++		std::fprintf(stderr, "WORLDGEN_NATURAL_STATS");
++		for (int count : naturalBiomeCounts)
++			std::fprintf(stderr, " %d", count);
++		std::fprintf(stderr, " %d %d %d\n", naturalRiverCount, naturalRiverRegionCount, settlements);
++		return;
++	}
++	AddHistoricalBuildings(arr, w, h);
+--- a/simplex.cpp
++++ b/simplex.cpp
+@@ -37,0 +37,1 @@
++#include <cstdlib>
+@@ -90,1 +91,2 @@
+-        rng.seed( time(0) );
++        const char *seed = std::getenv("ATLANTIS_NATURAL_SEED");
++        rng.seed(seed ? static_cast<unsigned int>(std::strtoul(seed, nullptr, 10)) : time(0));

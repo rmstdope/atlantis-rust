@@ -919,10 +919,16 @@ pub fn setup_economy(
     region.products.push(wage_production);
     region.products.push(entertainment_production);
 
-    let race_item = usize::try_from(region.race)
+    let Some(race_item) = usize::try_from(region.race)
         .ok()
         .and_then(|race| tables.item_families.items.get(race))
-        .ok_or(SetupError::InvalidRaceItem(region.race))?;
+    else {
+        if population == 0 && region.town.is_none() && region.race == -1 {
+            // Uninhabited regions retain base production but have no race market.
+            return Ok(());
+        }
+        return Err(SetupError::InvalidRaceItem(region.race));
+    };
     let race_ratio = race_item.base_price as f32 / (defs.base_man_cost as f32 * 10.0);
     region.markets.push(Market {
         market_type: MarketType::Buy,

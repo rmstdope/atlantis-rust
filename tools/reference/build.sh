@@ -41,6 +41,14 @@ done
 
 compiler=${CXX:-g++}
 compiler_flags='-g -I. -I.. -Wall -Werror -std=c++20'
+case ${ATLANTIS_REFERENCE_OPTIMIZE:-0} in
+    0) ;;
+    1) compiler_flags+=' -O2' ;;
+    *)
+        printf 'ATLANTIS_REFERENCE_OPTIMIZE must be 0 or 1\n' >&2
+        exit 2
+        ;;
+esac
 if "$compiler" --version 2>&1 | grep -qi clang; then
     compiler_flags+=' -Wno-error=vla-cxx-extension'
 fi
