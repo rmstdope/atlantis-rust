@@ -889,6 +889,87 @@ mod tests {
     }
 
     #[test]
+    fn scaled_shaft_links_number_shared_targets_in_source_call_order() {
+        let ruleset = <dyn Ruleset>::from_name("standard").expect("standard ruleset");
+        let mut game = Game::default();
+        let surface = create_region_array(&mut game, RegionLevelType::Surface, "surface", 8, 8)
+            .expect("surface array");
+        let small_underworld =
+            create_region_array(&mut game, RegionLevelType::Underworld, "small", 4, 4)
+                .expect("scaled underworld array");
+        let large_underworld =
+            create_region_array(&mut game, RegionLevelType::Underworld, "large", 8, 8)
+                .expect("full-size underworld array");
+        for region_id in game.region_ids().to_vec() {
+            game.region_mut(region_id).unwrap().terrain_type = Some(R_PLAIN);
+        }
+
+        let mut rng = Rng::new(424242);
+        make_shaft_links(
+            &mut game,
+            small_underworld,
+            surface,
+            1,
+            ruleset,
+            &mut rng,
+        )
+        .expect("scaled shafts");
+        make_shaft_links(
+            &mut game,
+            large_underworld,
+            surface,
+            1,
+            ruleset,
+            &mut rng,
+        )
+        .expect("full-size shafts");
+
+        let small_source_array = game.region_arrays[small_underworld].clone();
+        let large_source_array = game.region_arrays[large_underworld].clone();
+        let surface_array = game.region_arrays[surface].clone();
+        let mut small_source_nums = Vec::new();
+        for y in 0..small_source_array.y {
+            for x in 0..small_source_array.x {
+                if let Some(region_id) = small_source_array.get_region(x, y) {
+                    small_source_nums.push(game.region(region_id).unwrap().num);
+                }
+            }
+        }
+        let mut shared_targets = 0;
+        for y in 0..surface_array.y {
+            for x in 0..surface_array.x {
+                let Some(target_region_id) = surface_array.get_region(x, y) else {
+                    continue;
+                };
+                let target = game.region(target_region_id).unwrap();
+                let objects = target
+                    .object_ids()
+                    .iter()
+                    .map(|object_id| game.object(*object_id).unwrap())
+                    .collect::<Vec<_>>();
+                if objects.len() != 2 {
+                    continue;
+                }
+                shared_targets += 1;
+                assert!(objects.iter().all(|object| object.object_type == O_SHAFT as i32));
+                assert_eq!(
+                    objects.iter().map(|object| object.num).collect::<Vec<_>>(),
+                    [1, 2]
+                );
+                assert!(small_source_nums.contains(&objects[0].inner));
+                let matching_large_source = large_source_array
+                    .get_region(target.xloc, target.yloc)
+                    .expect("same-sized source region");
+                assert_eq!(
+                    objects[1].inner,
+                    game.region(matching_large_source).unwrap().num
+                );
+            }
+        }
+        assert!(shared_targets > 0, "expected scaled shafts to share targets");
+    }
+
+    #[test]
     fn nexus_connections_create_expected_gateways_for_each_terrain() {
         let ruleset = <dyn Ruleset>::from_name("neworigins").expect("neworigins ruleset");
         let mut game = Game::default();
@@ -1179,6 +1260,10 @@ mod tests {
         assert!(surface_regions
             .iter()
             .any(|region_id| game.region(*region_id).unwrap().gate == -1));
+        assert_eq!(
+            game.number_of_gates, 0,
+            "NewOrigins C++ leaves its global count unchanged for repair-created gates"
+        );
         assert!(game.region_ids().iter().all(|region_id| game
             .region(*region_id)
             .unwrap()
@@ -1191,6 +1276,17 @@ mod tests {
             >= 0));
         let nexus_id = game.region_arrays[nexus].get_region(0, 0).unwrap();
         assert!(game.region(nexus_id).unwrap().object_ids().is_empty());
+
+        final_setup_gates(&mut game, ruleset, &mut Rng::new(seed))
+            .expect("finalize repair-created gate");
+        assert_eq!(game.number_of_gates, 0);
+        assert_eq!(
+            surface_regions
+                .iter()
+                .filter(|region_id| game.region(**region_id).unwrap().gate > 0)
+                .count(),
+            1
+        );
     }
 
     #[test]
