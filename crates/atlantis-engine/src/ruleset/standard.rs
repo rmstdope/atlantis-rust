@@ -199,6 +199,10 @@ impl Ruleset for Standard {
         &GAME_DEFS
     }
 
+    fn target_shaft_uses_source_region(&self) -> bool {
+        true
+    }
+
     fn faction_limits(&self) -> &'static FactionLimits {
         &FACTION_LIMITS
     }

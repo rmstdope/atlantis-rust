@@ -107,3 +107,8 @@ It builds the disposable reference copy with `-O2` so the river path search comp
 reasonable time; the normal reference build flags are unchanged. The recorder writes each seed's raw values to
 `fixtures/world-generation/neworigins-natural-stats.json` and updates `fixtures/SHA256SUMS`.
 This fixture must only be created or refreshed by the C++ recorder.
+
+`record-world-connections.sh` records the seed-1 Nexus, surface, and underground connection
+state after shafts, Nexus exits, gates, and NewOrigins connectivity repair. It writes only
+`fixtures/world-generation/classic-connections.json` and its checksum entry; it does not refresh
+the terrain-count or `FinalSetup` fixtures.

@@ -205,6 +205,10 @@ impl Ruleset for NewOrigins {
         &GAME_DEFS
     }
 
+    fn fixes_unconnected_regions(&self) -> bool {
+        true
+    }
+
     fn faction_limits(&self) -> &'static FactionLimits {
         &FACTION_LIMITS
     }
@@ -262,6 +266,35 @@ impl Ruleset for NewOrigins {
             3 => R_DESERT,
             _ => crate::defs::terrains::R_OCEAN,
         }
+    }
+
+    fn underworld_terrain_roll_count(&self) -> i32 {
+        14
+    }
+
+    fn underworld_maze_direction_count(&self) -> usize {
+        7
+    }
+
+    fn underworld_chasm_exit_chance(&self) -> i32 {
+        40
+    }
+
+    fn underworld_terrain_from_roll(&self, roll: i32) -> crate::defs::terrains::TerrainId {
+        use crate::defs::terrains::{R_CAVERN, R_CHASM, R_OCEAN, R_TUNNELS, R_UFOREST};
+
+        match roll {
+            0..=2 => R_OCEAN,
+            3..=5 => R_CAVERN,
+            6..=8 => R_UFOREST,
+            9..=10 => R_TUNNELS,
+            12..=13 => R_CHASM,
+            _ => R_OCEAN,
+        }
+    }
+
+    fn remove_underground_coastal_lakes(&self) -> bool {
+        true
     }
 
     fn world_name_style(&self) -> WorldNameStyle {

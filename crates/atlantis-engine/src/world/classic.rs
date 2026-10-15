@@ -1,6 +1,9 @@
 use crate::ruleset::Ruleset;
 use crate::{
-    defs::terrains::{terrain_flags, TerrainDef, TerrainId, R_LAKE, R_NEXUS, R_NUM, R_OCEAN},
+    defs::terrains::{
+        terrain_flags, TerrainDef, TerrainId, R_CAVERN, R_CHASM, R_DFOREST, R_GROTTO, R_LAKE,
+        R_NEXUS, R_NUM, R_OCEAN, R_TUNNELS, R_UFOREST,
+    },
     defs::{ItemFlags, Tables},
     economy::setup_region,
     model::{Game, Region, RegionArray, RegionId, RegionLevelType},
@@ -193,6 +196,201 @@ pub fn create_classic_surface_level(
     final_setup(game, &array, definitions, ruleset, &tables, &mut names, rng)?;
 
     Ok(level)
+}
+
+/// C++: `standard/map.cpp` and `neworigins/map.cpp` `CreateUnderworldLevel`.
+pub fn create_underworld_level(
+    game: &mut Game,
+    ruleset: &dyn Ruleset,
+    rng: &mut Rng,
+    width: i32,
+    height: i32,
+) -> Result<usize, WorldGenerationError> {
+    create_underground_level(
+        game,
+        ruleset,
+        rng,
+        RegionLevelType::Underworld,
+        width,
+        height,
+    )
+}
+
+/// C++: `standard/map.cpp` and `neworigins/map.cpp` `CreateUnderdeepLevel`.
+pub fn create_underdeep_level(
+    game: &mut Game,
+    ruleset: &dyn Ruleset,
+    rng: &mut Rng,
+    width: i32,
+    height: i32,
+) -> Result<usize, WorldGenerationError> {
+    create_underground_level(
+        game,
+        ruleset,
+        rng,
+        RegionLevelType::Underdeep,
+        width,
+        height,
+    )
+}
+
+fn create_underground_level(
+    game: &mut Game,
+    ruleset: &dyn Ruleset,
+    rng: &mut Rng,
+    level_type: RegionLevelType,
+    width: i32,
+    height: i32,
+) -> Result<usize, WorldGenerationError> {
+    let name = match level_type {
+        RegionLevelType::Underworld => "underworld",
+        RegionLevelType::Underdeep => "underdeep",
+        RegionLevelType::Nexus | RegionLevelType::Surface => unreachable!(),
+    };
+    let level = create_region_array(game, level_type, name, width, height)?;
+    let array = game.region_arrays[level].clone();
+    let definitions = ruleset.game_defs();
+    let tables = ruleset.tables();
+    let mut names = NameGenerator::new(ruleset.world_name_style());
+
+    for region_id in scan_region_ids(&array) {
+        set_terrain_type(game, region_id, R_NUM);
+    }
+    setup_anchors(
+        game,
+        &array,
+        definitions,
+        ruleset,
+        &tables.terrains,
+        &mut names,
+        rng,
+    );
+    grow_terrain(
+        game,
+        &array,
+        definitions,
+        ruleset,
+        &tables.terrains,
+        &mut names,
+        rng,
+    );
+    assign_types(
+        game,
+        &array,
+        definitions,
+        ruleset,
+        &tables.terrains,
+        &mut names,
+        rng,
+    );
+    make_uw_maze(game, &array, ruleset, rng);
+    if ruleset.remove_underground_coastal_lakes() && definitions.lakes != 0 {
+        remove_coastal_lakes(game, &array, definitions, &tables.terrains);
+    }
+    if definitions.grow_races != 0 {
+        grow_races(
+            game,
+            &array,
+            definitions,
+            &tables.terrains,
+            &tables.item_families,
+            rng,
+        );
+    }
+    final_setup(game, &array, definitions, ruleset, &tables, &mut names, rng)?;
+
+    Ok(level)
+}
+
+/// C++: `standard/map.cpp` and `neworigins/map.cpp` `MakeUWMaze`.
+fn make_uw_maze(game: &mut Game, array: &RegionArray, ruleset: &dyn Ruleset, rng: &mut Rng) {
+    for x in 0..array.x {
+        for y in 0..array.y {
+            let Some(region_id) = array.get_region(x, y) else {
+                continue;
+            };
+            for direction in 0..ruleset.underworld_maze_direction_count() {
+                let degree = game
+                    .region(region_id)
+                    .expect("generated region exists")
+                    .neighbors
+                    .iter()
+                    .flatten()
+                    .count();
+                if degree <= 1 {
+                    break;
+                }
+
+                let Some(neighbor_id) = game
+                    .region(region_id)
+                    .expect("generated region exists")
+                    .neighbors
+                    .get(direction)
+                    .copied()
+                    .flatten()
+                else {
+                    continue;
+                };
+                let neighbor_region = game.region(neighbor_id).expect("neighbor exists");
+                if neighbor_region.xloc < x
+                    || (neighbor_region.xloc == x && neighbor_region.yloc < y)
+                {
+                    continue;
+                }
+                let from_terrain = terrain_type(game, region_id).expect("terrain assigned");
+                let to_terrain = terrain_type(game, neighbor_id).expect("terrain assigned");
+                if check_region_exit(ruleset, game, region_id, from_terrain, to_terrain, rng) {
+                    continue;
+                }
+                let neighbor_degree = neighbor_region.neighbors.iter().flatten().count();
+                if neighbor_degree <= 1 {
+                    break;
+                }
+
+                let opposite = real_direction_complement(game, region_id, direction);
+                game.region_mut(region_id)
+                    .expect("generated region exists")
+                    .neighbors[direction] = None;
+                game.region_mut(neighbor_id)
+                    .expect("neighbor exists")
+                    .neighbors[opposite] = None;
+            }
+        }
+    }
+}
+
+fn check_region_exit(
+    ruleset: &dyn Ruleset,
+    game: &Game,
+    region_id: RegionId,
+    from_terrain: TerrainId,
+    to_terrain: TerrainId,
+    rng: &mut Rng,
+) -> bool {
+    let region = game.region(region_id).expect("region exists");
+    let definitions = ruleset.game_defs();
+    if region.zloc == 1
+        || region.zloc > definitions.underworld_levels + definitions.underdeep_levels + 1
+    {
+        return true;
+    }
+
+    let mut chance = 0;
+    if [R_CAVERN, R_UFOREST].contains(&from_terrain) || [R_CAVERN, R_UFOREST].contains(&to_terrain)
+    {
+        chance = 25;
+    }
+    if from_terrain == R_TUNNELS || to_terrain == R_TUNNELS {
+        chance = 50;
+    }
+    if [R_GROTTO, R_DFOREST].contains(&from_terrain) || [R_GROTTO, R_DFOREST].contains(&to_terrain)
+    {
+        chance = 40;
+    }
+    if from_terrain == R_CHASM || to_terrain == R_CHASM {
+        chance = ruleset.underworld_chasm_exit_chance();
+    }
+    rng.get_random(100) >= chance
 }
 
 fn terrain_type(game: &Game, region_id: RegionId) -> Option<TerrainId> {
@@ -499,7 +697,8 @@ fn setup_anchors(
                     .region(region_id)
                     .expect("generated region exists")
                     .yloc;
-                let terrain = ruleset.get_reg_type(latitude(region_y, array.y), rng);
+                let terrain =
+                    ruleset.get_level_reg_type(array.level_type, latitude(region_y, array.y), rng);
                 set_terrain_type(game, region_id, terrain);
                 game.region_mut(region_id)
                     .expect("generated region exists")
@@ -538,6 +737,7 @@ fn grow_terrain(
     names: &mut NameGenerator,
     rng: &mut Rng,
 ) {
+    let grow_ocean = array.level_type != RegionLevelType::Surface;
     for iteration in 0..30 {
         for x in 0..array.x {
             for y in 0..array.y {
@@ -570,7 +770,11 @@ fn grow_terrain(
                         .region(region_id)
                         .expect("generated region exists")
                         .yloc;
-                    let terrain = ruleset.get_reg_type(latitude(region_y, array.y), rng);
+                    let terrain = ruleset.get_level_reg_type(
+                        array.level_type,
+                        latitude(region_y, array.y),
+                        rng,
+                    );
                     set_terrain_type(game, region_id, terrain);
                     if !is_ocean_like(terrain, terrain_defs) {
                         let name = names.next_region_name(terrain, terrain_defs, rng);
@@ -592,12 +796,12 @@ fn grow_terrain(
                         continue;
                     }
                     let neighbor_terrain = neighbor_region.terrain_type;
-                    if neighbor_terrain != Some(R_NUM)
-                        && neighbor_terrain
-                            .is_some_and(|terrain| !is_ocean_like(terrain, terrain_defs))
-                    {
-                        let neighbor_terrain =
-                            neighbor_terrain.expect("terrain condition requires a value");
+                    if neighbor_terrain.is_some_and(|terrain| {
+                        terrain != R_NUM
+                            && (!is_ocean_like(terrain, terrain_defs)
+                                || (grow_ocean && terrain != R_LAKE))
+                    }) {
+                        let neighbor_terrain = neighbor_terrain.expect("terrain exists");
                         let neighbor_wages = neighbor_region.wages;
                         if iteration == 0 {
                             game.region_mut(neighbor_id)
@@ -679,7 +883,8 @@ fn assign_types(
                     .region(region_id)
                     .expect("generated region exists")
                     .yloc;
-                let terrain = ruleset.get_reg_type(latitude(region_y, array.y), rng);
+                let terrain =
+                    ruleset.get_level_reg_type(array.level_type, latitude(region_y, array.y), rng);
                 set_terrain_type(game, region_id, terrain);
                 let name = names.next_region_name(terrain, terrain_defs, rng);
                 game.region_mut(region_id)
@@ -876,9 +1081,16 @@ fn final_setup(
                 .expect("classic generation assigns every region a terrain");
             let wages = region.wages;
             if is_ocean_like(terrain, &tables.terrains) && terrain != R_LAKE {
+                let name = match array.level_type {
+                    RegionLevelType::Underworld => "The Undersea".to_owned(),
+                    RegionLevelType::Underdeep => "The Deep Undersea".to_owned(),
+                    RegionLevelType::Nexus | RegionLevelType::Surface => {
+                        format!("{} Ocean", definitions.world_name)
+                    }
+                };
                 game.region_mut(region_id)
                     .expect("generated region exists")
-                    .name = format!("{} Ocean", definitions.world_name);
+                    .name = name;
             } else if wages == -1 {
                 game.region_mut(region_id)
                     .expect("generated region exists")
@@ -1148,7 +1360,7 @@ fn race_definition(race: i32, item_tables: &Tables) -> &crate::defs::ManDef {
         .expect("race definition exists")
 }
 
-fn planar_neighbors(array: &RegionArray, x: i32, y: i32) -> [Option<RegionId>; 6] {
+pub(super) fn planar_neighbors(array: &RegionArray, x: i32, y: i32) -> [Option<RegionId>; 6] {
     let last_y = array.y - 1;
     // Keep the C++ direction order: north, northeast, southeast, south, southwest, northwest.
     let candidates = [
@@ -1170,8 +1382,8 @@ fn planar_neighbors(array: &RegionArray, x: i32, y: i32) -> [Option<RegionId>; 6
 mod tests {
     use crate::{
         defs::terrains::{
-            terrain_flags, R_DESERT, R_FOREST, R_JUNGLE, R_LAKE, R_MOUNTAIN, R_NEXUS, R_OCEAN,
-            R_PLAIN, R_SWAMP, R_TUNDRA,
+            terrain_flags, R_CAVERN, R_CHASM, R_DESERT, R_DFOREST, R_FOREST, R_GROTTO, R_JUNGLE,
+            R_LAKE, R_MOUNTAIN, R_NEXUS, R_OCEAN, R_PLAIN, R_SWAMP, R_TUNDRA, R_TUNNELS, R_UFOREST,
         },
         model::{Game, RegionLevelType},
         rng::Rng,
@@ -1180,7 +1392,8 @@ mod tests {
     };
 
     use super::{
-        create_classic_surface_level, create_nexus_level, create_region_array, grow_races,
+        create_classic_surface_level, create_nexus_level, create_region_array,
+        create_underdeep_level, create_underworld_level, grow_races, make_uw_maze,
     };
 
     #[test]
@@ -1304,6 +1517,236 @@ mod tests {
             assert_eq!(region.habitat, 100, "{ruleset_name}");
             assert_eq!(region.population, 0, "{ruleset_name}");
             assert_eq!(region.object_ids().len(), 1, "{ruleset_name}");
+        }
+    }
+
+    #[test]
+    fn underworld_level_final_setup_uses_the_level_ocean_name() {
+        for (level_type, create_level, expected_name) in [
+            (
+                RegionLevelType::Underworld,
+                create_underworld_level
+                    as fn(
+                        &mut Game,
+                        &dyn Ruleset,
+                        &mut Rng,
+                        i32,
+                        i32,
+                    ) -> Result<usize, super::WorldGenerationError>,
+                "The Undersea",
+            ),
+            (
+                RegionLevelType::Underdeep,
+                create_underdeep_level,
+                "The Deep Undersea",
+            ),
+        ] {
+            let ruleset = <dyn Ruleset>::from_name("neworigins").expect("neworigins ruleset");
+            let mut game = Game::default();
+            let mut rng = Rng::new(424242);
+            let level =
+                create_level(&mut game, ruleset, &mut rng, 16, 16).expect("underground level");
+
+            assert_eq!(game.region_arrays[level].level_type, level_type);
+            let mut ocean_regions = 0;
+            for region_id in game.region_ids().iter().copied() {
+                let region = game.region(region_id).expect("generated region");
+                assert!(region.terrain_type.is_some());
+                assert!(game.get_dummy(region_id).is_some());
+                if region.terrain_type == Some(R_OCEAN) {
+                    ocean_regions += 1;
+                    assert_eq!(region.name, expected_name);
+                }
+            }
+            assert!(ocean_regions > 0, "seed must include an ocean region");
+        }
+    }
+
+    #[test]
+    fn underworld_maze_matches_cpp_exit_rules() {
+        for (ruleset_name, expected_edges) in [("standard", 36), ("neworigins", 48)] {
+            let ruleset = <dyn Ruleset>::from_name(ruleset_name).expect("supported ruleset");
+            let mut game = Game::default();
+            let level =
+                create_region_array(&mut game, RegionLevelType::Underworld, "underworld", 8, 8)
+                    .expect("underworld region array");
+            let array = game.region_arrays[level].clone();
+            let region_ids = game.region_ids().to_vec();
+            for region_id in region_ids {
+                game.region_mut(region_id).unwrap().terrain_type = Some(R_CHASM);
+            }
+
+            make_uw_maze(&mut game, &array, ruleset, &mut Rng::new(8675309));
+
+            let opposites = [3, 4, 5, 0, 1, 2];
+            let mut directed_edges = 0;
+            for region_id in game.region_ids().iter().copied() {
+                let region = game.region(region_id).unwrap();
+                let degree = region.neighbors.iter().flatten().count();
+                assert!(degree > 0, "maze removed all exits at {:?}", region_id);
+                for (direction, neighbor_id) in region.neighbors.iter().enumerate() {
+                    if let Some(neighbor_id) = neighbor_id {
+                        directed_edges += 1;
+                        assert_eq!(
+                            game.region(*neighbor_id).unwrap().neighbors[opposites[direction]],
+                            Some(region_id),
+                            "maze made a one-way exit"
+                        );
+                    }
+                }
+            }
+            assert_eq!(directed_edges / 2, expected_edges, "{ruleset_name}");
+        }
+    }
+
+    #[test]
+    fn underworld_maze_mixed_terrain_pins_edges_and_random_draws() {
+        let terrains = [R_CAVERN, R_UFOREST, R_TUNNELS, R_GROTTO, R_DFOREST, R_CHASM];
+        for ruleset_name in ["standard", "neworigins"] {
+            let (expected_edges, expected_next_draw): (&[(i32, i32)], i32) = match ruleset_name {
+                "standard" => (
+                    &[
+                        (0, 7),
+                        (1, 4),
+                        (2, 5),
+                        (2, 6),
+                        (3, 6),
+                        (3, 7),
+                        (3, 11),
+                        (4, 8),
+                        (4, 9),
+                        (5, 10),
+                        (5, 13),
+                        (6, 10),
+                        (7, 8),
+                        (8, 16),
+                        (9, 12),
+                        (9, 13),
+                        (10, 13),
+                        (10, 14),
+                        (11, 19),
+                        (12, 20),
+                        (13, 18),
+                        (13, 21),
+                        (15, 16),
+                        (15, 19),
+                        (16, 20),
+                        (16, 23),
+                        (16, 24),
+                        (17, 20),
+                        (17, 21),
+                        (18, 26),
+                        (19, 22),
+                        (19, 23),
+                        (20, 24),
+                        (20, 25),
+                        (20, 28),
+                        (21, 26),
+                        (22, 26),
+                        (22, 27),
+                        (24, 31),
+                        (25, 28),
+                        (26, 29),
+                        (26, 30),
+                    ][..],
+                    406,
+                ),
+                "neworigins" => (
+                    &[
+                        (0, 7),
+                        (1, 4),
+                        (2, 5),
+                        (2, 10),
+                        (3, 7),
+                        (3, 11),
+                        (4, 8),
+                        (4, 9),
+                        (5, 9),
+                        (5, 10),
+                        (5, 13),
+                        (6, 10),
+                        (6, 11),
+                        (6, 14),
+                        (7, 8),
+                        (8, 16),
+                        (9, 12),
+                        (9, 13),
+                        (10, 13),
+                        (11, 15),
+                        (11, 19),
+                        (12, 20),
+                        (13, 18),
+                        (13, 21),
+                        (14, 22),
+                        (15, 16),
+                        (15, 19),
+                        (16, 20),
+                        (16, 23),
+                        (16, 24),
+                        (17, 20),
+                        (17, 21),
+                        (17, 25),
+                        (18, 22),
+                        (18, 26),
+                        (19, 22),
+                        (19, 27),
+                        (20, 24),
+                        (20, 25),
+                        (20, 28),
+                        (21, 26),
+                        (22, 26),
+                        (24, 31),
+                        (25, 28),
+                        (25, 29),
+                        (26, 29),
+                        (26, 30),
+                        (27, 30),
+                    ][..],
+                    537,
+                ),
+                _ => unreachable!(),
+            };
+            let ruleset = <dyn Ruleset>::from_name(ruleset_name).expect("supported ruleset");
+            let mut game = Game::default();
+            let level =
+                create_region_array(&mut game, RegionLevelType::Underworld, "underworld", 8, 8)
+                    .expect("underworld region array");
+            let array = game.region_arrays[level].clone();
+            let direction_count = ruleset.underworld_maze_direction_count();
+            assert_eq!(
+                direction_count,
+                if ruleset_name == "neworigins" { 7 } else { 6 },
+                "{ruleset_name} maze direction boundary"
+            );
+            if ruleset_name == "neworigins" {
+                assert!(game.region_ids().iter().all(|region_id| game
+                    .region(*region_id)
+                    .unwrap()
+                    .neighbors
+                    .get(direction_count - 1)
+                    .is_none()));
+            }
+            for (index, region_id) in game.region_ids().to_vec().iter().enumerate() {
+                game.region_mut(*region_id).unwrap().terrain_type =
+                    Some(terrains[index % terrains.len()]);
+            }
+
+            let mut rng = Rng::new(8675309);
+            make_uw_maze(&mut game, &array, ruleset, &mut rng);
+            let mut edges = Vec::new();
+            for region_id in game.region_ids() {
+                let region = game.region(*region_id).unwrap();
+                for neighbor_id in region.neighbors.iter().flatten() {
+                    let neighbor_num = game.region(*neighbor_id).unwrap().num;
+                    if region.num < neighbor_num {
+                        edges.push((region.num, neighbor_num));
+                    }
+                }
+            }
+            edges.sort_unstable();
+            let next_draw = rng.get_random(1000);
+            assert_eq!(edges, expected_edges, "{ruleset_name}");
+            assert_eq!(next_draw, expected_next_draw, "{ruleset_name} RNG state");
         }
     }
 

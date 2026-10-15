@@ -1,6 +1,7 @@
 use crate::economy::SetupError;
 
 pub mod classic;
+pub mod connections;
 mod names;
 pub mod natural;
 pub mod settlements;
@@ -10,11 +11,14 @@ pub use settlements::{make_starting_city, TownType};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorldGenerationError {
     RegionArray(crate::model::RegionArrayError),
+    MissingRegionArray(usize),
+    MissingRegionLevel(crate::model::RegionLevelType),
     InvalidSurfaceDimensions { width: i32, height: i32 },
     InvalidNaturalSurfaceDimensions { width: i32, height: i32 },
     NaturalMapDimensionsOverflow { width: i32, height: i32 },
     MissingNaturalBiome { x: i32, y: i32 },
     UnsupportedNaturalRuleset,
+    InvalidGateCount,
     RegionSetup(SetupError),
     MissingGeneratedName(i32),
     RegionNumberOverflow,
@@ -24,6 +28,12 @@ impl std::fmt::Display for WorldGenerationError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::RegionArray(error) => error.fmt(formatter),
+            Self::MissingRegionArray(index) => {
+                write!(formatter, "region array {index} does not exist")
+            }
+            Self::MissingRegionLevel(level) => {
+                write!(formatter, "region array for {level:?} does not exist")
+            }
             Self::InvalidSurfaceDimensions { width, height } => write!(
                 formatter,
                 "classic surface dimensions must be at least 8x8 (got {width}x{height})"
@@ -41,6 +51,9 @@ impl std::fmt::Display for WorldGenerationError {
             }
             Self::UnsupportedNaturalRuleset => {
                 formatter.write_str("natural surface generation requires the NewOrigins ruleset")
+            }
+            Self::InvalidGateCount => {
+                formatter.write_str("gate numbering has gates but no available numbers")
             }
             Self::RegionSetup(error) => write!(formatter, "region setup failed: {error:?}"),
             Self::MissingGeneratedName(index) => {
