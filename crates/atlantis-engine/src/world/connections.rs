@@ -905,24 +905,10 @@ mod tests {
         }
 
         let mut rng = Rng::new(424242);
-        make_shaft_links(
-            &mut game,
-            small_underworld,
-            surface,
-            1,
-            ruleset,
-            &mut rng,
-        )
-        .expect("scaled shafts");
-        make_shaft_links(
-            &mut game,
-            large_underworld,
-            surface,
-            1,
-            ruleset,
-            &mut rng,
-        )
-        .expect("full-size shafts");
+        make_shaft_links(&mut game, small_underworld, surface, 1, ruleset, &mut rng)
+            .expect("scaled shafts");
+        make_shaft_links(&mut game, large_underworld, surface, 1, ruleset, &mut rng)
+            .expect("full-size shafts");
 
         let small_source_array = game.region_arrays[small_underworld].clone();
         let large_source_array = game.region_arrays[large_underworld].clone();
@@ -947,26 +933,33 @@ mod tests {
                     .iter()
                     .map(|object_id| game.object(*object_id).unwrap())
                     .collect::<Vec<_>>();
-                if objects.len() != 2 {
-                    continue;
-                }
-                shared_targets += 1;
-                assert!(objects.iter().all(|object| object.object_type == O_SHAFT as i32));
-                assert_eq!(
-                    objects.iter().map(|object| object.num).collect::<Vec<_>>(),
-                    [1, 2]
-                );
-                assert!(small_source_nums.contains(&objects[0].inner));
+                assert!((1..=2).contains(&objects.len()));
+                assert!(objects
+                    .iter()
+                    .all(|object| object.object_type == O_SHAFT as i32));
                 let matching_large_source = large_source_array
                     .get_region(target.xloc, target.yloc)
                     .expect("same-sized source region");
                 assert_eq!(
-                    objects[1].inner,
+                    objects.last().unwrap().inner,
                     game.region(matching_large_source).unwrap().num
                 );
+                if objects.len() == 1 {
+                    assert_eq!(objects[0].num, 1);
+                } else {
+                    shared_targets += 1;
+                    assert_eq!(
+                        objects.iter().map(|object| object.num).collect::<Vec<_>>(),
+                        [1, 2]
+                    );
+                    assert!(small_source_nums.contains(&objects[0].inner));
+                }
             }
         }
-        assert!(shared_targets > 0, "expected scaled shafts to share targets");
+        assert!(
+            shared_targets > 0,
+            "expected scaled shafts to share targets"
+        );
     }
 
     #[test]
