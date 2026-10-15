@@ -12,7 +12,7 @@ use crate::version::CURRENT_ATL_VER;
 
 const PLAYERS_HEADER: &str = "AtlantisPlayerStatus";
 const GAME_STATUS_UNINITIALIZED: i32 = 0;
-const GAME_STATUS_NEW: i32 = 1;
+pub(crate) const GAME_STATUS_NEW: i32 = 1;
 const GAME_STATUS_RUNNING: i32 = 2;
 const GAME_STATUS_FINISHED: i32 = 3;
 const TEMPLATE_OFF: i32 = 0;

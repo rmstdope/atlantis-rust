@@ -1,4 +1,4 @@
-use crate::economy::SetupError;
+use crate::{economy::SetupError, model::Game, rng::Rng, ruleset::Ruleset};
 
 pub mod classic;
 pub mod connections;
@@ -7,6 +7,20 @@ pub mod natural;
 pub mod settlements;
 
 pub use settlements::{make_starting_city, TownType};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SurfaceGenerator {
+    Classic,
+    Natural,
+}
+
+pub(crate) struct WorldGenerationOptions {
+    pub(crate) seed: i32,
+    pub(crate) width: i32,
+    pub(crate) height: i32,
+    pub(crate) nexus_size: i32,
+    pub(crate) generator: SurfaceGenerator,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorldGenerationError {
@@ -18,6 +32,7 @@ pub enum WorldGenerationError {
     NaturalMapDimensionsOverflow { width: i32, height: i32 },
     MissingNaturalBiome { x: i32, y: i32 },
     UnsupportedNaturalRuleset,
+    UnsupportedAbyssLevel,
     InvalidGateCount,
     RegionSetup(SetupError),
     MissingGeneratedName(i32),
@@ -52,6 +67,9 @@ impl std::fmt::Display for WorldGenerationError {
             Self::UnsupportedNaturalRuleset => {
                 formatter.write_str("natural surface generation requires the NewOrigins ruleset")
             }
+            Self::UnsupportedAbyssLevel => {
+                formatter.write_str("abyss level generation is not implemented")
+            }
             Self::InvalidGateCount => {
                 formatter.write_str("gate numbering has gates but no available numbers")
             }
@@ -78,4 +96,62 @@ impl From<SetupError> for WorldGenerationError {
     fn from(error: SetupError) -> Self {
         Self::RegionSetup(error)
     }
+}
+
+/// C++: `game.cpp` `Game::CreateWorld`; builds levels before world connections.
+pub(crate) fn create_world(
+    game: &mut Game,
+    ruleset: &'static dyn Ruleset,
+    rng: &mut Rng,
+    options: WorldGenerationOptions,
+) -> Result<(), WorldGenerationError> {
+    let definitions = ruleset.game_defs();
+    if definitions.abyss_level != 0 {
+        return Err(WorldGenerationError::UnsupportedAbyssLevel);
+    }
+    let nexus_height = if options.nexus_size == 1 { 1 } else { 2 };
+    classic::create_nexus_level(game, ruleset, rng, options.nexus_size, nexus_height)?;
+    match options.generator {
+        SurfaceGenerator::Classic => {
+            classic::create_classic_surface_level(
+                game,
+                ruleset,
+                rng,
+                options.width,
+                options.height,
+            )?;
+        }
+        SurfaceGenerator::Natural => {
+            natural::create_natural_surface_level(
+                game,
+                ruleset,
+                rng,
+                options.seed,
+                options.width,
+                options.height,
+            )?;
+        }
+    }
+
+    for level in 2..definitions.underworld_levels + 2 {
+        classic::create_underworld_level(
+            game,
+            ruleset,
+            rng,
+            options.width / ruleset.level_x_scale(level),
+            options.height / ruleset.level_y_scale(level),
+        )?;
+    }
+    for level in definitions.underworld_levels + 2
+        ..definitions.underworld_levels + definitions.underdeep_levels + 2
+    {
+        classic::create_underdeep_level(
+            game,
+            ruleset,
+            rng,
+            options.width / ruleset.level_x_scale(level),
+            options.height / ruleset.level_y_scale(level),
+        )?;
+    }
+    connections::connect_world(game, ruleset, rng)
 }

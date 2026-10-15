@@ -1,9 +1,74 @@
 use atlantis_engine::defs::{objects, terrains};
 use atlantis_engine::model::{Game, Object, Region, UnitType};
 use atlantis_engine::model::{RegionArray, RegionLevelType, TownInfo};
-use atlantis_engine::newgame::{add_faction, setup_new_game};
+use atlantis_engine::newgame::{
+    add_faction, create_new_game, setup_new_game, NewGameOptions, SurfaceGenerator,
+};
 use atlantis_engine::rng::Rng;
 use atlantis_engine::ruleset::Ruleset;
+use atlantis_engine::save::save_legacy;
+
+#[test]
+fn create_new_game_builds_classic_worlds_for_both_rulesets_deterministically() {
+    for (ruleset_name, expected_levels) in [("standard", 2), ("neworigins", 3)] {
+        let ruleset = <dyn Ruleset>::from_name(ruleset_name).expect("supported ruleset");
+        let options = NewGameOptions {
+            seed: 424242,
+            width: 16,
+            height: 16,
+            nexus_size: 1,
+            generator: SurfaceGenerator::Classic,
+        };
+        let mut first = create_new_game(ruleset, options).expect("create first game");
+        let mut second = create_new_game(ruleset, options).expect("create second game");
+
+        assert_eq!(first.game, second.game, "{ruleset_name} game state");
+        assert_eq!(
+            save_legacy(&mut first).expect("save first game"),
+            save_legacy(&mut second).expect("save second game"),
+            "{ruleset_name} save"
+        );
+        assert_eq!(first.seed, 424242);
+        assert_eq!(first.game.game_status, 1);
+        assert_eq!(first.game.region_arrays.len(), expected_levels);
+        assert_eq!(
+            first.game.region_arrays[0].level_type,
+            RegionLevelType::Nexus
+        );
+        assert_eq!(
+            first.game.region_arrays[1].level_type,
+            RegionLevelType::Surface
+        );
+        assert!(first.game.guard_faction.is_some());
+        assert!(first.game.monster_faction.is_some());
+    }
+}
+
+#[test]
+fn create_new_game_uses_the_neworigins_natural_surface_generator() {
+    let ruleset = <dyn Ruleset>::from_name("neworigins").expect("NewOrigins ruleset");
+    let game = create_new_game(
+        ruleset,
+        NewGameOptions {
+            seed: 424242,
+            width: 16,
+            height: 16,
+            nexus_size: 1,
+            generator: SurfaceGenerator::Natural,
+        },
+    )
+    .expect("create NewOrigins natural game");
+
+    assert_eq!(game.game.region_arrays.len(), 3);
+    assert_eq!(
+        game.game.region_arrays[1].level_type,
+        RegionLevelType::Surface
+    );
+    assert_eq!(
+        game.game.region_arrays[2].level_type,
+        RegionLevelType::Underworld
+    );
+}
 
 #[test]
 fn new_game_creates_npc_factions_in_original_order() {
