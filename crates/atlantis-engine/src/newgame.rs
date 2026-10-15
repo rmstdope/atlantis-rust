@@ -132,11 +132,13 @@ pub fn create_new_game(
         &mut game,
         ruleset,
         &mut rng,
-        options.seed,
-        options.width,
-        options.height,
-        options.nexus_size,
-        options.generator,
+        crate::world::WorldGenerationOptions {
+            seed: options.seed,
+            width: options.width,
+            height: options.height,
+            nexus_size: options.nexus_size,
+            generator: options.generator,
+        },
     )?;
     setup_new_game(&mut game, ruleset, &mut rng)?;
 

@@ -14,6 +14,14 @@ pub enum SurfaceGenerator {
     Natural,
 }
 
+pub(crate) struct WorldGenerationOptions {
+    pub(crate) seed: i32,
+    pub(crate) width: i32,
+    pub(crate) height: i32,
+    pub(crate) nexus_size: i32,
+    pub(crate) generator: SurfaceGenerator,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorldGenerationError {
     RegionArray(crate::model::RegionArrayError),
@@ -95,24 +103,33 @@ pub(crate) fn create_world(
     game: &mut Game,
     ruleset: &'static dyn Ruleset,
     rng: &mut Rng,
-    seed: i32,
-    width: i32,
-    height: i32,
-    nexus_size: i32,
-    generator: SurfaceGenerator,
+    options: WorldGenerationOptions,
 ) -> Result<(), WorldGenerationError> {
     let definitions = ruleset.game_defs();
     if definitions.abyss_level != 0 {
         return Err(WorldGenerationError::UnsupportedAbyssLevel);
     }
-    let nexus_height = if nexus_size == 1 { 1 } else { 2 };
-    classic::create_nexus_level(game, ruleset, rng, nexus_size, nexus_height)?;
-    match generator {
+    let nexus_height = if options.nexus_size == 1 { 1 } else { 2 };
+    classic::create_nexus_level(game, ruleset, rng, options.nexus_size, nexus_height)?;
+    match options.generator {
         SurfaceGenerator::Classic => {
-            classic::create_classic_surface_level(game, ruleset, rng, width, height)?;
+            classic::create_classic_surface_level(
+                game,
+                ruleset,
+                rng,
+                options.width,
+                options.height,
+            )?;
         }
         SurfaceGenerator::Natural => {
-            natural::create_natural_surface_level(game, ruleset, rng, seed, width, height)?;
+            natural::create_natural_surface_level(
+                game,
+                ruleset,
+                rng,
+                options.seed,
+                options.width,
+                options.height,
+            )?;
         }
     }
 
@@ -121,8 +138,8 @@ pub(crate) fn create_world(
             game,
             ruleset,
             rng,
-            width / ruleset.level_x_scale(level),
-            height / ruleset.level_y_scale(level),
+            options.width / ruleset.level_x_scale(level),
+            options.height / ruleset.level_y_scale(level),
         )?;
     }
     for level in definitions.underworld_levels + 2
@@ -132,8 +149,8 @@ pub(crate) fn create_world(
             game,
             ruleset,
             rng,
-            width / ruleset.level_x_scale(level),
-            height / ruleset.level_y_scale(level),
+            options.width / ruleset.level_x_scale(level),
+            options.height / ruleset.level_y_scale(level),
         )?;
     }
     connections::connect_world(game, ruleset, rng)
