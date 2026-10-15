@@ -5,14 +5,31 @@ use crate::model::{
     Attitude, Faction, FactionId, FactionItemShow, FactionSkillShow, Game, ModelError, ObjectId,
     RegionId, RegionLevelType, UnitType,
 };
+use crate::players::GAME_STATUS_NEW;
 use crate::rng::Rng;
 use crate::ruleset::Ruleset;
+use crate::save::LoadedGame;
+use crate::world::WorldGenerationError;
+
+pub use crate::world::SurfaceGenerator;
 
 const REVEAL_FACTION: i32 = 2;
 const ATTITUDE_UNFRIENDLY: i32 = 1;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NewGameOptions {
+    pub seed: i32,
+    pub width: i32,
+    pub height: i32,
+    pub nexus_size: i32,
+    pub generator: SurfaceGenerator,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NewGameError {
+    InvalidSurfaceDimensions { width: i32, height: i32 },
+    InvalidNexusSize(i32),
+    WorldGeneration(WorldGenerationError),
     MissingStartRegion,
     MissingNexusArray,
     MissingDummy(RegionId),
@@ -30,6 +47,15 @@ pub enum NewGameError {
 impl fmt::Display for NewGameError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidSurfaceDimensions { width, height } => write!(
+                formatter,
+                "surface dimensions must be at least 8x8 and multiples of 8 (got {width}x{height})"
+            ),
+            Self::InvalidNexusSize(size) => write!(
+                formatter,
+                "nexus size must be 1 or a positive even number (got {size})"
+            ),
+            Self::WorldGeneration(error) => error.fmt(formatter),
             Self::MissingStartRegion => formatter.write_str("new faction has no starting region"),
             Self::MissingNexusArray => formatter.write_str("multi-hex nexus array is missing"),
             Self::MissingDummy(region) => {
@@ -74,6 +100,52 @@ impl From<ModelError> for NewGameError {
     fn from(error: ModelError) -> Self {
         Self::Model(error)
     }
+}
+
+impl From<WorldGenerationError> for NewGameError {
+    fn from(error: WorldGenerationError) -> Self {
+        Self::WorldGeneration(error)
+    }
+}
+
+/// C++: `game.cpp` `Game::NewGame`; creates the world, then runs post-world setup.
+pub fn create_new_game(
+    ruleset: &'static dyn Ruleset,
+    options: NewGameOptions,
+) -> Result<LoadedGame, NewGameError> {
+    if options.width < 8 || options.height < 8 || options.width % 8 != 0 || options.height % 8 != 0
+    {
+        return Err(NewGameError::InvalidSurfaceDimensions {
+            width: options.width,
+            height: options.height,
+        });
+    }
+    if options.nexus_size <= 0 || (options.nexus_size > 1 && options.nexus_size % 2 != 0) {
+        return Err(NewGameError::InvalidNexusSize(options.nexus_size));
+    }
+
+    let mut game = Game::default();
+    game.game_status = GAME_STATUS_NEW;
+    game.setup_unit_nums()?;
+    let mut rng = Rng::new(options.seed);
+    crate::world::create_world(
+        &mut game,
+        ruleset,
+        &mut rng,
+        options.seed,
+        options.width,
+        options.height,
+        options.nexus_size,
+        options.generator,
+    )?;
+    setup_new_game(&mut game, ruleset, &mut rng)?;
+
+    Ok(LoadedGame {
+        game,
+        ruleset,
+        seed: options.seed,
+        rng,
+    })
 }
 
 /// C++: `game.cpp` `Game::NewGame`; post-world faction setup, with later NPC phases in `npc`.
