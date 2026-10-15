@@ -1145,6 +1145,42 @@ mod tests {
     }
 
     #[test]
+    fn neworigins_gate_setup_retries_collisions_in_region_order() {
+        let ruleset = <dyn Ruleset>::from_name("neworigins").unwrap();
+        let seed = 33;
+        let mut collision_probe = Rng::new(seed);
+        let first_gate = collision_probe.get_random(100);
+        collision_probe.get_random(12);
+        assert_eq!(
+            first_gate,
+            collision_probe.get_random(100),
+            "seed must make the second gate candidate collide"
+        );
+        let mut game = Game::default();
+        create_region_array(&mut game, RegionLevelType::Surface, "surface", 8, 8)
+            .expect("surface array");
+        let gated = game.region_ids()[..3].to_vec();
+        for region_id in &gated {
+            game.region_mut(*region_id).unwrap().gate = -1;
+        }
+        game.number_of_gates = gated.len() as i32;
+
+        let mut rng = Rng::new(seed);
+        final_setup_gates(&mut game, ruleset, &mut rng).expect("final gate setup");
+
+        let assignments = gated
+            .iter()
+            .map(|region_id| {
+                let region = game.region(*region_id).unwrap();
+                (region.num, region.gate, region.gate_month)
+            })
+            .collect::<Vec<_>>();
+        let next_draw = rng.get_random(1000);
+        assert_eq!(assignments, [(0, 94, 4), (1, 5, 6), (2, 82, 0)]);
+        assert_eq!(next_draw, 723);
+    }
+
+    #[test]
     fn neworigins_connectivity_repair_opens_one_wall_reciprocally() {
         let ruleset = <dyn Ruleset>::from_name("neworigins").unwrap();
         let mut game = Game::default();

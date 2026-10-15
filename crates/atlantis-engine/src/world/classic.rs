@@ -1382,8 +1382,8 @@ pub(super) fn planar_neighbors(array: &RegionArray, x: i32, y: i32) -> [Option<R
 mod tests {
     use crate::{
         defs::terrains::{
-            terrain_flags, R_CHASM, R_DESERT, R_FOREST, R_JUNGLE, R_LAKE, R_MOUNTAIN, R_NEXUS,
-            R_OCEAN, R_PLAIN, R_SWAMP, R_TUNDRA,
+            terrain_flags, R_CAVERN, R_CHASM, R_DESERT, R_DFOREST, R_FOREST, R_GROTTO, R_JUNGLE,
+            R_LAKE, R_MOUNTAIN, R_NEXUS, R_OCEAN, R_PLAIN, R_SWAMP, R_TUNDRA, R_TUNNELS, R_UFOREST,
         },
         model::{Game, RegionLevelType},
         rng::Rng,
@@ -1596,6 +1596,157 @@ mod tests {
                 }
             }
             assert_eq!(directed_edges / 2, expected_edges, "{ruleset_name}");
+        }
+    }
+
+    #[test]
+    fn underworld_maze_mixed_terrain_pins_edges_and_random_draws() {
+        let terrains = [R_CAVERN, R_UFOREST, R_TUNNELS, R_GROTTO, R_DFOREST, R_CHASM];
+        for ruleset_name in ["standard", "neworigins"] {
+            let (expected_edges, expected_next_draw): (&[(i32, i32)], i32) = match ruleset_name {
+                "standard" => (
+                    &[
+                        (0, 7),
+                        (1, 4),
+                        (2, 5),
+                        (2, 6),
+                        (3, 6),
+                        (3, 7),
+                        (3, 11),
+                        (4, 8),
+                        (4, 9),
+                        (5, 10),
+                        (5, 13),
+                        (6, 10),
+                        (7, 8),
+                        (8, 16),
+                        (9, 12),
+                        (9, 13),
+                        (10, 13),
+                        (10, 14),
+                        (11, 19),
+                        (12, 20),
+                        (13, 18),
+                        (13, 21),
+                        (15, 16),
+                        (15, 19),
+                        (16, 20),
+                        (16, 23),
+                        (16, 24),
+                        (17, 20),
+                        (17, 21),
+                        (18, 26),
+                        (19, 22),
+                        (19, 23),
+                        (20, 24),
+                        (20, 25),
+                        (20, 28),
+                        (21, 26),
+                        (22, 26),
+                        (22, 27),
+                        (24, 31),
+                        (25, 28),
+                        (26, 29),
+                        (26, 30),
+                    ][..],
+                    406,
+                ),
+                "neworigins" => (
+                    &[
+                        (0, 7),
+                        (1, 4),
+                        (2, 5),
+                        (2, 10),
+                        (3, 7),
+                        (3, 11),
+                        (4, 8),
+                        (4, 9),
+                        (5, 9),
+                        (5, 10),
+                        (5, 13),
+                        (6, 10),
+                        (6, 11),
+                        (6, 14),
+                        (7, 8),
+                        (8, 16),
+                        (9, 12),
+                        (9, 13),
+                        (10, 13),
+                        (11, 15),
+                        (11, 19),
+                        (12, 20),
+                        (13, 18),
+                        (13, 21),
+                        (14, 22),
+                        (15, 16),
+                        (15, 19),
+                        (16, 20),
+                        (16, 23),
+                        (16, 24),
+                        (17, 20),
+                        (17, 21),
+                        (17, 25),
+                        (18, 22),
+                        (18, 26),
+                        (19, 22),
+                        (19, 27),
+                        (20, 24),
+                        (20, 25),
+                        (20, 28),
+                        (21, 26),
+                        (22, 26),
+                        (24, 31),
+                        (25, 28),
+                        (25, 29),
+                        (26, 29),
+                        (26, 30),
+                        (27, 30),
+                    ][..],
+                    537,
+                ),
+                _ => unreachable!(),
+            };
+            let ruleset = <dyn Ruleset>::from_name(ruleset_name).expect("supported ruleset");
+            let mut game = Game::default();
+            let level =
+                create_region_array(&mut game, RegionLevelType::Underworld, "underworld", 8, 8)
+                    .expect("underworld region array");
+            let array = game.region_arrays[level].clone();
+            let direction_count = ruleset.underworld_maze_direction_count();
+            assert_eq!(
+                direction_count,
+                if ruleset_name == "neworigins" { 7 } else { 6 },
+                "{ruleset_name} maze direction boundary"
+            );
+            if ruleset_name == "neworigins" {
+                assert!(game.region_ids().iter().all(|region_id| game
+                    .region(*region_id)
+                    .unwrap()
+                    .neighbors
+                    .get(direction_count - 1)
+                    .is_none()));
+            }
+            for (index, region_id) in game.region_ids().to_vec().iter().enumerate() {
+                game.region_mut(*region_id).unwrap().terrain_type =
+                    Some(terrains[index % terrains.len()]);
+            }
+
+            let mut rng = Rng::new(8675309);
+            make_uw_maze(&mut game, &array, ruleset, &mut rng);
+            let mut edges = Vec::new();
+            for region_id in game.region_ids() {
+                let region = game.region(*region_id).unwrap();
+                for neighbor_id in region.neighbors.iter().flatten() {
+                    let neighbor_num = game.region(*neighbor_id).unwrap().num;
+                    if region.num < neighbor_num {
+                        edges.push((region.num, neighbor_num));
+                    }
+                }
+            }
+            edges.sort_unstable();
+            let next_draw = rng.get_random(1000);
+            assert_eq!(edges, expected_edges, "{ruleset_name}");
+            assert_eq!(next_draw, expected_next_draw, "{ruleset_name} RNG state");
         }
     }
 
