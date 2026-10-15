@@ -6,11 +6,12 @@ use crate::{
         modify::TableModifier,
         skills::{attribute_item_flags, attribute_modifier_types, range_flags},
         terrains::{
-            TerrainId, R_DESERT, R_FOREST, R_JUNGLE, R_MOUNTAIN, R_OCEAN, R_PLAIN, R_SWAMP,
-            R_TUNDRA,
+            TerrainId, R_CAVERN, R_CHASM, R_DESERT, R_DFOREST, R_FOREST, R_GROTTO, R_JUNGLE,
+            R_MOUNTAIN, R_NEXUS, R_OCEAN, R_PLAIN, R_SWAMP, R_TUNDRA, R_TUNNELS, R_UFOREST,
         },
         GameDefs, ItemId, RulesetTables,
     },
+    model::RegionLevelType,
     rng::Rng,
 };
 
@@ -99,6 +100,66 @@ pub trait Ruleset: Sync {
     /// C++: `ARegionList::GetRegType`; the surface consumes one `getrandom(64)` draw.
     fn get_reg_type(&self, latitude: i32, rng: &mut Rng) -> TerrainId {
         self.surface_terrain_from_roll(latitude, rng.get_random(64))
+    }
+
+    fn underworld_terrain_roll_count(&self) -> i32 {
+        4
+    }
+
+    fn underworld_maze_direction_count(&self) -> usize {
+        6
+    }
+
+    fn underworld_chasm_exit_chance(&self) -> i32 {
+        60
+    }
+
+    fn target_shaft_uses_source_region(&self) -> bool {
+        false
+    }
+
+    fn fixes_unconnected_regions(&self) -> bool {
+        false
+    }
+
+    fn underworld_terrain_from_roll(&self, roll: i32) -> TerrainId {
+        match roll {
+            0 => R_OCEAN,
+            1 => R_CAVERN,
+            2 => R_UFOREST,
+            3 => R_TUNNELS,
+            _ => R_OCEAN,
+        }
+    }
+
+    fn underdeep_terrain_from_roll(&self, roll: i32) -> TerrainId {
+        match roll {
+            0 => R_OCEAN,
+            1 => R_CHASM,
+            2 => R_DFOREST,
+            3 => R_GROTTO,
+            _ => R_OCEAN,
+        }
+    }
+
+    fn remove_underground_coastal_lakes(&self) -> bool {
+        false
+    }
+
+    /// C++: `ARegionList::GetRegType`; underground levels use distinct roll ranges.
+    fn get_level_reg_type(
+        &self,
+        level_type: RegionLevelType,
+        latitude: i32,
+        rng: &mut Rng,
+    ) -> TerrainId {
+        match level_type {
+            RegionLevelType::Nexus => R_NEXUS,
+            RegionLevelType::Surface => self.get_reg_type(latitude, rng),
+            RegionLevelType::Underworld => self
+                .underworld_terrain_from_roll(rng.get_random(self.underworld_terrain_roll_count())),
+            RegionLevelType::Underdeep => self.underdeep_terrain_from_roll(rng.get_random(4)),
+        }
     }
 
     fn world_name_style(&self) -> WorldNameStyle {
@@ -313,5 +374,45 @@ mod tests {
         assert_eq!(scales(&defs, 4), (2, 4));
         assert_eq!(scales(&defs, 5), (4, 4));
         assert_eq!(scales(&defs, 6), (1, 1));
+    }
+
+    #[test]
+    fn underworld_terrain_rolls_match_cpp_rulesets() {
+        use crate::defs::terrains::{
+            R_CAVERN, R_CHASM, R_DFOREST, R_GROTTO, R_OCEAN, R_TUNNELS, R_UFOREST,
+        };
+
+        let standard = <dyn Ruleset>::from_name("standard").expect("standard ruleset");
+        assert_eq!(standard.underworld_terrain_roll_count(), 4);
+        assert_eq!(
+            (0..4)
+                .map(|roll| standard.underworld_terrain_from_roll(roll))
+                .collect::<Vec<_>>(),
+            [R_OCEAN, R_CAVERN, R_UFOREST, R_TUNNELS]
+        );
+        assert_eq!(
+            (0..4)
+                .map(|roll| standard.underdeep_terrain_from_roll(roll))
+                .collect::<Vec<_>>(),
+            [R_OCEAN, R_CHASM, R_DFOREST, R_GROTTO]
+        );
+
+        let neworigins = <dyn Ruleset>::from_name("neworigins").expect("neworigins ruleset");
+        assert_eq!(neworigins.underworld_terrain_roll_count(), 14);
+        assert_eq!(
+            (0..14)
+                .map(|roll| neworigins.underworld_terrain_from_roll(roll))
+                .collect::<Vec<_>>(),
+            [
+                R_OCEAN, R_OCEAN, R_OCEAN, R_CAVERN, R_CAVERN, R_CAVERN, R_UFOREST, R_UFOREST,
+                R_UFOREST, R_TUNNELS, R_TUNNELS, R_OCEAN, R_CHASM, R_CHASM,
+            ]
+        );
+        assert_eq!(
+            (0..4)
+                .map(|roll| neworigins.underdeep_terrain_from_roll(roll))
+                .collect::<Vec<_>>(),
+            [R_OCEAN, R_CHASM, R_DFOREST, R_GROTTO]
+        );
     }
 }

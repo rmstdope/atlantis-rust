@@ -1,0 +1,68 @@
+--- a/standard/world.cpp
++++ b/standard/world.cpp
+@@ -30,1 +30,3 @@
+-#include "game.h"
++#include <cstdio>
++#include <cstdlib>
++#include "game.h"
+@@ -2223,3 +2225,26 @@
+ 	regions.FinalSetupGates();
++	if (std::getenv("ATLANTIS_WORLD_CONNECTIONS")) {
++		std::fprintf(stderr, "WORLDGEN_CONNECTION_SUMMARY %d %d\n",
++				regions.Num(), regions.numberofgates);
++		forlist(&regions) {
++			ARegion *region = (ARegion *) elem;
++			std::fprintf(stderr, "WORLDGEN_CONNECTION_REGION %d %d %d %d %d %d %d",
++					region->num, region->zloc, region->xloc, region->yloc,
++					region->type, region->gate, region->gatemonth);
++			for (int direction = 0; direction < NDIRS; ++direction)
++				std::fprintf(stderr, " %d",
++						region->neighbors[direction] ?
++						region->neighbors[direction]->num : -1);
++			std::fprintf(stderr, "\n");
++			forlist(&region->objects) {
++				Object *object = (Object *) elem;
++				if (object->type != O_SHAFT && object->type != O_GATEWAY)
++					continue;
++				std::fprintf(stderr, "WORLDGEN_CONNECTION_OBJECT %d %d %d %d %d\n",
++						region->num, object->type, object->num, object->inner,
++						object->region ? object->region->num : -1);
++			}
++		}
++	}
+ 
+ 	regions.CalcDensities();
+--- a/neworigins/world.cpp
++++ b/neworigins/world.cpp
+@@ -30,1 +30,3 @@
+-#include "game.h"
++#include <cstdio>
++#include <cstdlib>
++#include "game.h"
+@@ -518,3 +520,26 @@
+ 	regions.FinalSetupGates();
++	if (std::getenv("ATLANTIS_WORLD_CONNECTIONS")) {
++		std::fprintf(stderr, "WORLDGEN_CONNECTION_SUMMARY %d %d\n",
++				regions.Num(), regions.numberofgates);
++		forlist(&regions) {
++			ARegion *region = (ARegion *) elem;
++			std::fprintf(stderr, "WORLDGEN_CONNECTION_REGION %d %d %d %d %d %d %d",
++					region->num, region->zloc, region->xloc, region->yloc,
++					region->type, region->gate, region->gatemonth);
++			for (int direction = 0; direction < NDIRS; ++direction)
++				std::fprintf(stderr, " %d",
++						region->neighbors[direction] ?
++						region->neighbors[direction]->num : -1);
++			std::fprintf(stderr, "\n");
++			forlist(&region->objects) {
++				Object *object = (Object *) elem;
++				if (object->type != O_SHAFT && object->type != O_GATEWAY)
++					continue;
++				std::fprintf(stderr, "WORLDGEN_CONNECTION_OBJECT %d %d %d %d %d\n",
++						region->num, object->type, object->num, object->inner,
++						object->region ? object->region->num : -1);
++			}
++		}
++	}
+ 
+ 	regions.CalcDensities();

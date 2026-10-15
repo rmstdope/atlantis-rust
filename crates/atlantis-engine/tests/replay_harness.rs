@@ -317,7 +317,8 @@ fn replay_fixtures_match_sha256_manifest() {
                 || filename_text == "fixtures/world-generation/classic-terrain-counts.json"
                 || filename_text == "fixtures/world-generation/classic-nexus-final-setup.json"
                 || filename_text == "fixtures/world-generation/classic-surface-final-setup.json"
-                || filename_text == "fixtures/world-generation/neworigins-natural-stats.json",
+                || filename_text == "fixtures/world-generation/neworigins-natural-stats.json"
+                || filename_text == "fixtures/world-generation/classic-connections.json",
             "unexpected file in fixture manifest: {filename:?}"
         );
         assert!(
@@ -378,6 +379,7 @@ fn replay_fixtures_match_sha256_manifest() {
         "classic-nexus-final-setup.json",
         "classic-surface-final-setup.json",
         "neworigins-natural-stats.json",
+        "classic-connections.json",
     ] {
         actual.insert(PathBuf::from("fixtures/world-generation").join(filename));
     }
