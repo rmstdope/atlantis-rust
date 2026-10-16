@@ -219,9 +219,9 @@ fn new_cli_help_and_general_help_list_the_command() {
 
     let general_help = run(&directory, ["--help"]);
     assert!(general_help.status.success());
-    assert!(String::from_utf8_lossy(&general_help.stdout).contains("new"));
+    assert!(String::from_utf8_lossy(&general_help.stdout).contains("Commands: new, edit, check"));
 
     let unknown_command = run(&directory, ["unknown"]);
     assert_eq!(unknown_command.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&unknown_command.stdout).contains("new` or `edit"));
+    assert!(String::from_utf8_lossy(&unknown_command.stdout).contains("new`, `edit`, or `check"));
 }

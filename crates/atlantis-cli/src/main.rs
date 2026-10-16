@@ -1,3 +1,4 @@
+mod check;
 mod edit;
 mod new;
 
@@ -8,6 +9,11 @@ fn main() {
         .is_some_and(|argument| atlantis_engine::text::is_equal(argument, "new"))
     {
         new::run(arguments)
+    } else if arguments
+        .first()
+        .is_some_and(|argument| atlantis_engine::text::is_equal(argument, "check"))
+    {
+        check::run(arguments)
     } else {
         edit::run(arguments)
     };

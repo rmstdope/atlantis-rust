@@ -1,0 +1,26 @@
+
+
+*** Error: Warning: No password on #atlantis line. ***
+
+
+*** Error: If this is your first turn, ignore this error. ***
+#atlantis 7
+unit 10
+
+
+*** Error: BOGUS is not a valid order. ***
+BOGUS
+turn
+
+
+*** Error: TURN: cannot nest ***
+  turn
+    ; nested
+  endturn
+
+
+*** Error: END: without FORM. ***
+end
+#end
+
+5 errors found!

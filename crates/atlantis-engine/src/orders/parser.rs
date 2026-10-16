@@ -90,6 +90,12 @@ pub struct ParsedOrderLine {
     pub indent: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CheckOutputEvent {
+    Error(String),
+    Order(ParsedOrderLine),
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OrderParseResult {
     pub errors: Vec<String>,
@@ -144,6 +150,16 @@ pub fn parse_order_file(
     input: &[u8],
     mode: OrderParseMode,
 ) -> Result<OrderParseResult, OrderParseError> {
+    parse_order_file_with_check_output(game, defs, tables, input, mode).map(|(result, _)| result)
+}
+
+pub(crate) fn parse_order_file_with_check_output(
+    game: &mut Game,
+    defs: &GameDefs,
+    tables: &RulesetTables,
+    input: &[u8],
+    mode: OrderParseMode,
+) -> Result<(OrderParseResult, Vec<CheckOutputEvent>), OrderParseError> {
     Parser::new(game, defs, tables, mode).parse(input)
 }
 
@@ -153,6 +169,7 @@ struct Parser<'a> {
     tables: &'a RulesetTables,
     mode: OrderParseMode,
     result: OrderParseResult,
+    check_output: Vec<CheckOutputEvent>,
     faction_id: Option<FactionId>,
     unit_stack: Vec<UnitId>,
     check_unit_states: Vec<(UnitId, i32, i32)>,
@@ -173,6 +190,7 @@ impl<'a> Parser<'a> {
             tables,
             mode,
             result: OrderParseResult::default(),
+            check_output: Vec::new(),
             faction_id: None,
             unit_stack: Vec::new(),
             check_unit_states: Vec::new(),
@@ -181,7 +199,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse(mut self, input: &[u8]) -> Result<OrderParseResult, OrderParseError> {
+    fn parse(
+        mut self,
+        input: &[u8],
+    ) -> Result<(OrderParseResult, Vec<CheckOutputEvent>), OrderParseError> {
         let mut source = TextInput::new(Cursor::new(input));
         let mut lines = Vec::new();
         while let Some(line) = source.get_order_line()? {
@@ -204,7 +225,7 @@ impl<'a> Parser<'a> {
         if self.mode == OrderParseMode::Turn {
             self.default_work_order();
         }
-        Ok(self.result)
+        Ok((self.result, self.check_output))
     }
 
     /// C++: `game.cpp` `Game::DefaultWorkOrder`.
@@ -4333,6 +4354,8 @@ impl<'a> Parser<'a> {
     ) {
         if self.mode == OrderParseMode::Check {
             self.result.errors.push(message.to_owned());
+            self.check_output
+                .push(CheckOutputEvent::Error(message.to_owned()));
             return;
         }
 
@@ -4361,10 +4384,12 @@ impl<'a> Parser<'a> {
 
     fn record_check_line(&mut self, raw_line: String) {
         if self.mode == OrderParseMode::Check {
-            self.result.lines.push(ParsedOrderLine {
+            let line = ParsedOrderLine {
                 raw: raw_line,
                 indent: self.indent.max(0) as usize,
-            });
+            };
+            self.result.lines.push(line.clone());
+            self.check_output.push(CheckOutputEvent::Order(line));
         }
     }
 }
