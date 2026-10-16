@@ -313,6 +313,7 @@ fn replay_fixtures_match_sha256_manifest() {
             filename_text.starts_with("fixtures/standard/")
                 || filename_text.starts_with("fixtures/neworigins/")
                 || filename_text.starts_with("fixtures/new-game/")
+                || filename_text.starts_with("fixtures/check/")
                 || filename_text.starts_with("fixtures/economy/region-setup/")
                 || filename_text == "fixtures/world-generation/classic-terrain-counts.json"
                 || filename_text == "fixtures/world-generation/classic-nexus-final-setup.json"
@@ -357,6 +358,24 @@ fn replay_fixtures_match_sha256_manifest() {
             file.file_name()
         );
         actual.insert(PathBuf::from("fixtures/new-game").join(file.file_name()));
+    }
+    for ruleset in ["standard", "neworigins"] {
+        let ruleset_dir = fixtures.join("check").join(ruleset);
+        for file in fs::read_dir(&ruleset_dir).expect("read order-check fixture directory") {
+            let file = file.expect("read order-check fixture file");
+            assert!(
+                file.file_type()
+                    .expect("read order-check fixture type")
+                    .is_file(),
+                "unexpected directory in order-check fixture directory: {:?}",
+                file.file_name()
+            );
+            actual.insert(
+                PathBuf::from("fixtures/check")
+                    .join(ruleset)
+                    .join(file.file_name()),
+            );
+        }
     }
 
     for ruleset in ["standard", "neworigins"] {

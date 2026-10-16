@@ -34,7 +34,7 @@ pub fn run(mut arguments: Vec<String>) -> i32 {
         print_general_help();
         return 0;
     } else {
-        println!("error: expected the `new` or `edit` command. Try: atlantis --help");
+        println!("error: expected the `new`, `edit`, or `check` command. Try: atlantis --help");
         return 2;
     }
 
@@ -1335,7 +1335,7 @@ fn fail(message: &str) -> i32 {
 }
 
 fn print_general_help() {
-    println!("Usage: atlantis <command> ...\nCommands: new, edit");
+    println!("Usage: atlantis <command> ...\nCommands: new, edit, check");
 }
 
 fn print_edit_help() {

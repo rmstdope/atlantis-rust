@@ -1,0 +1,9 @@
+#atlantis 7 none
+unit 10
+
+
+*** Error: BOGUS is not a valid order. ***
+BOGUS
+#end
+
+1 error found!

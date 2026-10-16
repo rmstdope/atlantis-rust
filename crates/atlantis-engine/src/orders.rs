@@ -1,6 +1,8 @@
 use crate::text::{get_token, is_equal, value};
 
+mod check;
 mod parser;
+pub use check::{check_orders, OrderCheckResult};
 pub use parser::{
     parse_order_file, OrderParseError, OrderParseMode, OrderParseResult, ParsedOrderLine,
 };

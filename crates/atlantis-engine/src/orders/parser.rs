@@ -90,10 +90,17 @@ pub struct ParsedOrderLine {
     pub indent: usize,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum CheckOutputEvent {
+    Error(String),
+    Order(ParsedOrderLine),
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OrderParseResult {
     pub errors: Vec<String>,
     pub lines: Vec<ParsedOrderLine>,
+    pub(crate) check_output: Vec<CheckOutputEvent>,
 }
 
 #[derive(Debug)]
@@ -4333,6 +4340,9 @@ impl<'a> Parser<'a> {
     ) {
         if self.mode == OrderParseMode::Check {
             self.result.errors.push(message.to_owned());
+            self.result
+                .check_output
+                .push(CheckOutputEvent::Error(message.to_owned()));
             return;
         }
 
@@ -4361,10 +4371,12 @@ impl<'a> Parser<'a> {
 
     fn record_check_line(&mut self, raw_line: String) {
         if self.mode == OrderParseMode::Check {
-            self.result.lines.push(ParsedOrderLine {
+            let line = ParsedOrderLine {
                 raw: raw_line,
                 indent: self.indent.max(0) as usize,
-            });
+            };
+            self.result.lines.push(line.clone());
+            self.result.check_output.push(CheckOutputEvent::Order(line));
         }
     }
 }
