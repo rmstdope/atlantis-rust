@@ -1,5 +1,5 @@
-use super::parser::CheckOutputEvent;
-use super::{parse_order_file, OrderParseError, OrderParseMode};
+use super::parser::{parse_order_file_with_check_output, CheckOutputEvent};
+use super::{OrderParseError, OrderParseMode};
 use crate::model::{Faction, Game, Object, Region, Unit};
 use crate::ruleset::Ruleset;
 
@@ -16,7 +16,7 @@ pub fn check_orders(
 ) -> Result<OrderCheckResult, OrderParseError> {
     let mut game = dummy_game(ruleset)?;
     let tables = ruleset.tables();
-    let result = parse_order_file(
+    let (result, check_output) = parse_order_file_with_check_output(
         &mut game,
         ruleset.game_defs(),
         &tables,
@@ -25,7 +25,7 @@ pub fn check_orders(
     )?;
     let error_count = result.errors.len();
     let mut output = String::new();
-    for event in result.check_output {
+    for event in check_output {
         match event {
             CheckOutputEvent::Error(message) => {
                 output.push_str("\n\n*** Error: ");
