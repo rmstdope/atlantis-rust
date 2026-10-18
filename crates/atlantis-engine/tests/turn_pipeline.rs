@@ -165,8 +165,10 @@ fn run_turn_refuses_a_finished_game_without_saving() {
 
 #[test]
 #[should_panic(expected = "unported turn phase CheckVictory has work")]
-fn run_turn_does_not_complete_a_neworigins_turn_with_unported_victory_and_times() {
-    // neworigins' CheckVictory and WriteWorldEvents act even in an empty world.
+fn run_turn_does_not_complete_a_neworigins_turn_with_unported_victory_check() {
+    // neworigins' CheckVictory acts even in an empty world. WriteWorldEvents, which also always
+    // acts there, is guarded too but unreachable until CheckVictory is ported: whoever ports it
+    // adds the WriteWorldEvents test.
     let loaded = empty_world_game_for(neworigins());
     let players_input = write_players(&loaded.game).expect("players.in");
 

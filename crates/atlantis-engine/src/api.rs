@@ -36,11 +36,12 @@ pub struct TurnOutput {
     pub engine_output: String,
 }
 
-/// Why a turn did not complete. Only `GameFinished` carries the console output. For the
-/// others, C++ `RunGame` has already printed its fixed lines up to the failing step
-/// ("Setting Up Turn...", "Reading the Gamemaster File...", "Reading the Orders File..."), and
-/// `main` adds "Couldn't run the game!" or "Couldn't save the game!". A caller reproducing the
-/// console rebuilds those lines.
+/// Why a turn did not complete. Only `GameFinished` carries the console output; the others lose
+/// it. `Players` follows C++ `ReadPlayers` failing after "Setting Up Turn..." and "Reading the
+/// Gamemaster File...". `Orders` has no C++ counterpart (`ReadOrders` cannot fail; the parser
+/// here reports malformed input). `Save` follows `main`'s `SaveGame` failing after the whole
+/// turn's console. A caller reproducing the console adds `main`'s "Couldn't run the game!" or
+/// "Couldn't save the game!".
 #[derive(Debug)]
 pub enum TurnError {
     /// C++ `RunGame` returns 0 after "This game is finished!", so nothing is saved.
