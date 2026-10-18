@@ -20,12 +20,19 @@ fn standard() -> &'static dyn Ruleset {
     <dyn Ruleset>::from_name("standard").expect("standard ruleset")
 }
 
+fn neworigins() -> &'static dyn Ruleset {
+    <dyn Ruleset>::from_name("neworigins").expect("neworigins ruleset")
+}
+
 /// A standard game with no world: the Guardsmen (1), the Creatures (2) and one leaderless player
 /// faction (3). Every unported phase walks units, regions or objects, so this is the turn the
 /// pipeline can complete today. The player faction has no unit, so `FindDeadFactions` marks it
 /// dead: it still gets its report and template, and is gone from `game.out`.
 fn empty_world_game() -> LoadedGame {
-    let ruleset = standard();
+    empty_world_game_for(standard())
+}
+
+fn empty_world_game_for(ruleset: &'static dyn Ruleset) -> LoadedGame {
     let mut game = Game::default();
     game.game_status = 1; // GAME_STATUS_NEW, as `atlantis new` leaves it.
     game.setup_unit_nums().expect("unit numbers");
@@ -100,7 +107,7 @@ fn run_turn_completes_a_turn_with_no_queued_work() {
 }
 
 #[test]
-#[should_panic(expected = "unported RunOrders phase")]
+#[should_panic(expected = "unported turn phase RunFindOrders has work: unit")]
 fn run_turn_stops_at_the_first_unported_phase_with_work() {
     let mut order_files = BTreeMap::new();
     order_files.insert(3, TURN_1_ORDERS.to_vec());
@@ -114,7 +121,7 @@ fn run_turn_stops_at_the_first_unported_phase_with_work() {
 }
 
 #[test]
-#[should_panic(expected = "unported RunOrders phase RunQuitOrders has work: faction 3")]
+#[should_panic(expected = "unported turn phase RunQuitOrders has work: faction 3")]
 fn run_turn_quits_inactive_factions_into_the_unported_quit_phase() {
     let mut loaded = empty_world_game();
     let max_inactive = loaded.ruleset.game_defs().max_inactive_turns;
@@ -154,6 +161,21 @@ fn run_turn_refuses_a_finished_game_without_saving() {
         ),
         other => panic!("unexpected error {other}"),
     }
+}
+
+#[test]
+#[should_panic(expected = "unported turn phase CheckVictory has work")]
+fn run_turn_does_not_complete_a_neworigins_turn_with_unported_victory_and_times() {
+    // neworigins' CheckVictory and WriteWorldEvents act even in an empty world.
+    let loaded = empty_world_game_for(neworigins());
+    let players_input = write_players(&loaded.game).expect("players.in");
+
+    let _ = run_turn(TurnInput {
+        loaded_game: loaded,
+        players_input,
+        order_files: BTreeMap::new(),
+        existing_times: BTreeSet::new(),
+    });
 }
 
 fn surface_game(month: i32, rows: i32) -> Game {

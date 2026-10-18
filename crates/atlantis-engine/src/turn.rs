@@ -63,10 +63,9 @@ pub(crate) fn run_game(input: TurnInput) -> Result<TurnOutput, TurnError> {
     let mut files = Vec::new();
     if defs.world_events != 0 {
         output.write_line("Writing world events...");
-        assert!(
-            loaded.game.events.is_empty(),
-            "the unported world-event phase has generated events"
-        );
+        // C++: `Events::Write` returns a "Nothing mentionable happened" article even with no
+        // facts, and `WriteTimesArticle` then draws a `times.N` name: it always acts.
+        unported(&loaded.game, "WriteWorldEvents", Walks::Always);
     }
 
     output.write_line("Writing the Report File...");
@@ -279,7 +278,7 @@ fn run_orders(
     defs: &crate::defs::GameDefs,
     output: &mut crate::output::EngineOutput,
 ) {
-    use Walks::{Factions, NoLivingFaction, Objects, Regions, Units};
+    use Walks::{Always, Factions, NoLivingFaction, Objects, Regions, Units};
 
     output.write_line("Running FIND Orders...");
     unported(game, "RunFindOrders", Units);
@@ -355,6 +354,12 @@ fn run_orders(
     // C++: `PostProcessTurn` ends the game when no faction exists, then walks every region
     // (`PostTurn`, `AdjustCityMons`) and grows monsters across the region levels.
     unported(game, "PostProcessTurn", NoLivingFaction);
+    if defs.open_ended == 0 && defs.ruleset_name == "NewOrigins" {
+        // C++: the neworigins `CheckVictory` walks the quest list, prints the visited-region
+        // count and draws to create quests whatever the world holds; the standard one walks
+        // regions only, which the `Regions` guard below covers.
+        unported(game, "CheckVictory", Always);
+    }
     unported(game, "PostProcessTurn", Regions);
     unported(game, "DeleteEmptyUnits", Units);
     unported(game, "RemoveEmptyObjects", Objects);
@@ -372,6 +377,8 @@ enum Walks {
     Factions(fn(&Faction) -> bool),
     /// No faction exists any more (C++ `EndGame(0)`).
     NoLivingFaction,
+    /// The phase acts on every turn.
+    Always,
 }
 
 fn unported(game: &Game, phase: &str, walks: Walks) {
@@ -400,12 +407,13 @@ fn unported(game: &Game, phase: &str, walks: Walks) {
         Walks::Factions(predicate) => factions()
             .find(|faction| predicate(faction))
             .map(|faction| format!("faction {}", faction.num)),
+        Walks::Always => Some("it acts every turn".to_owned()),
         Walks::NoLivingFaction => factions()
             .all(|faction| faction.exists == 0)
             .then(|| "no living faction".to_owned()),
     };
     if let Some(blocker) = blocker {
-        panic!("unported RunOrders phase {phase} has work: {blocker}");
+        panic!("unported turn phase {phase} has work: {blocker}");
     }
 }
 

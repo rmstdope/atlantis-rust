@@ -22,7 +22,6 @@ pub struct TurnInput {
 }
 
 /// One file a turn writes, named as the original names it.
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TurnFile {
     pub name: String,
@@ -37,6 +36,11 @@ pub struct TurnOutput {
     pub engine_output: String,
 }
 
+/// Why a turn did not complete. Only `GameFinished` carries the console output. For the
+/// others, C++ `RunGame` has already printed its fixed lines up to the failing step
+/// ("Setting Up Turn...", "Reading the Gamemaster File...", "Reading the Orders File..."), and
+/// `main` adds "Couldn't run the game!" or "Couldn't save the game!". A caller reproducing the
+/// console rebuilds those lines.
 #[derive(Debug)]
 pub enum TurnError {
     /// C++ `RunGame` returns 0 after "This game is finished!", so nothing is saved.
