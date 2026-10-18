@@ -113,7 +113,10 @@ of the complete diff and bead. If its changes are substantial enough to make ano
 the producer chooses the right follow-up scope and obtains it; minor, self-contained answers need
 not create a review loop. Unresolved findings, a red or missing check, or a reviewer that cannot
 produce a usable result go to a person. Whether the navigator also takes part in the plan, the
-review or the merge is `navigator_gates` in `.cerebro/project.conf`; absent means none.
+review or the merge is `navigator_gates` in `.cerebro/project.conf`; absent means none. This
+repository declares no `navigator_gates` on purpose, so its producers decide the plan, obtain the
+review and merge on their own. `project-conf navigator_gates` reporting "unset" is that
+declaration, not a missing one, and is no reason to stop.
 
 A review here also checks the fidelity rules above: a new or reordered random draw, an unordered
 container reaching output, or a regenerated fixture is a blocking finding.
