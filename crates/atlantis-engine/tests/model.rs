@@ -307,3 +307,46 @@ fn nexus_region_array_supports_the_original_single_cell_layout() {
 
     assert_eq!(array.get_region(0, 0), Some(region));
 }
+
+#[test]
+fn empty_hell_frees_hell_units_and_keeps_region_units() {
+    let mut game = Game::default();
+    let region = game.add_region(Region::default());
+    let dummy = game.add_object(region, Object::default()).unwrap();
+    let living = game.add_unit(dummy, Unit::default()).unwrap();
+    let dead = game.add_hell_unit(region, Unit::default()).unwrap();
+
+    game.empty_hell();
+
+    assert!(game.region(region).unwrap().hell_unit_ids().is_empty());
+    assert!(game.unit(dead).is_none());
+    assert!(game.unit(living).is_some());
+    assert_eq!(game.object(dummy).unwrap().unit_ids(), [living]);
+}
+
+#[test]
+fn remove_faction_drops_membership_and_first_attitude_keeping_order() {
+    use atlantis_engine::model::Attitude;
+    let mut game = Game::default();
+    let first = game.add_faction(Faction::new(1, &[]));
+    let dead = game.add_faction(Faction::new(2, &[]));
+    let last = game.add_faction(Faction::new(3, &[]));
+    let attitude = |faction_num| Attitude {
+        faction_num,
+        attitude: 1,
+    };
+    // C++ Faction::RemoveAttitude stops at the first match.
+    game.faction_mut(first).unwrap().attitudes = vec![attitude(2), attitude(3), attitude(2)];
+    game.faction_mut(last).unwrap().attitudes = vec![attitude(1)];
+
+    let removed = game.remove_faction(dead).expect("faction existed");
+
+    assert_eq!(removed.num, 2);
+    assert_eq!(game.faction_ids(), [first, last]);
+    assert!(game.faction(dead).is_none());
+    assert_eq!(
+        game.faction(first).unwrap().attitudes,
+        [attitude(3), attitude(2)]
+    );
+    assert_eq!(game.faction(last).unwrap().attitudes, [attitude(1)]);
+}

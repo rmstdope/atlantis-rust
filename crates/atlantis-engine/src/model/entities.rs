@@ -347,6 +347,10 @@ impl Region {
         &self.hell_unit_ids
     }
 
+    pub fn take_hell_unit_ids(&mut self) -> Vec<UnitId> {
+        std::mem::take(&mut self.hell_unit_ids)
+    }
+
     pub(super) fn add_object(&mut self, object_id: ObjectId) {
         self.object_ids.push(object_id);
     }
