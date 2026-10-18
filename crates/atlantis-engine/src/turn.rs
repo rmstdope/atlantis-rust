@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use crate::api::{TurnError, TurnFile, TurnInput, TurnOutput};
 use crate::defs::{
     enums::flags,
     skills::{lookup_skill, skill_flags},
@@ -7,12 +8,431 @@ use crate::defs::{
     BattleItemFlags, ItemFlags, ItemId, ItemTypeFlags, RulesetTables, WeaponFlags,
 };
 use crate::model::{Faction, Game, Object, Region, Unit, UnitType};
-use crate::orders::{MoveDir, MoveOrder, OrderData, ProduceOrder};
+use crate::orders::{
+    parse_order_file, MoveDir, MoveOrder, OrderData, OrderParseMode, ProduceOrder,
+};
+use crate::players::{read_players, write_players};
 use crate::rng::Rng;
 use crate::ruleset::Ruleset;
+use crate::save::save_legacy;
 
 const FLAG_AUTOTAX: i32 = 0x0004;
 const TAX_AUTO: i32 = 3;
+const GAME_STATUS_RUNNING: i32 = 2;
+const GAME_STATUS_FINISHED: i32 = 3;
+const QUIT_BY_GM: i32 = 2;
+const WEATHER_NORMAL: i32 = 0;
+const WEATHER_WINTER: i32 = 1;
+const WEATHER_MONSOON: i32 = 2;
+
+/// C++: `game.cpp` `Game::RunGame` followed by `Game::SaveGame`; runs one turn in memory.
+///
+/// The engine output starts at "Setting Up Turn...": the startup banner and `OpenGame`'s lines
+/// are printed by whoever loaded the save.
+pub(crate) fn run_game(input: TurnInput) -> Result<TurnOutput, TurnError> {
+    let mut loaded = input.loaded_game;
+    let ruleset = loaded.ruleset;
+    let defs = ruleset.game_defs();
+    let tables = ruleset.tables();
+    let mut output = crate::output::EngineOutput::new();
+
+    output.write_line("Setting Up Turn...");
+    pre_process_turn(&mut loaded.game, ruleset, &tables, &mut loaded.rng)?;
+
+    output.write_line("Reading the Gamemaster File...");
+    read_players(&mut loaded.game, &input.players_input, defs, &tables)?;
+    if loaded.game.game_status == GAME_STATUS_FINISHED {
+        output.write_line("This game is finished!");
+        return Err(TurnError::GameFinished {
+            engine_output: output.into_string(),
+        });
+    }
+    loaded.game.game_status = GAME_STATUS_RUNNING;
+
+    output.write_line("Reading the Orders File...");
+    read_orders(&mut loaded.game, ruleset, &tables, &input.order_files)?;
+
+    if defs.max_inactive_turns != -1 {
+        output.write_line("QUITting Inactive Factions...");
+        remove_inactive_factions(&mut loaded.game, ruleset);
+    }
+
+    output.write_line("Running the Turn...");
+    run_orders(&mut loaded.game, defs, &mut output);
+
+    let mut files = Vec::new();
+    if defs.world_events != 0 {
+        output.write_line("Writing world events...");
+        assert!(
+            loaded.game.events.is_empty(),
+            "the unported world-event phase has generated events"
+        );
+    }
+
+    output.write_line("Writing the Report File...");
+    for faction_id in loaded.game.faction_ids().to_vec() {
+        let faction = loaded
+            .game
+            .faction(faction_id)
+            .expect("ordered faction exists");
+        if should_write_report(faction, &loaded.game, defs.gm_report != 0) {
+            files.push(TurnFile {
+                name: format!("report.{}", faction.num),
+                contents: String::new(),
+            });
+        }
+        output.write_dot();
+    }
+    output.write_line("");
+
+    output.write_line("Writing order templates...");
+    for faction_id in loaded.game.faction_ids().to_vec() {
+        let faction = loaded
+            .game
+            .faction(faction_id)
+            .expect("ordered faction exists");
+        if !is_npc(faction) {
+            files.push(TurnFile {
+                name: format!("template.{}", faction.num),
+                contents: String::new(),
+            });
+        }
+        output.write_dot();
+    }
+    output.write_line("");
+
+    loaded.game.empty_hell();
+    output.write_line("Writing Playerinfo File...");
+    files.push(TurnFile {
+        name: "players.out".to_owned(),
+        contents: write_players(&loaded.game)?,
+    });
+
+    output.write_line("Removing Dead Factions...");
+    delete_dead_factions(&mut loaded.game);
+    output.write_line("done");
+
+    files.push(TurnFile {
+        name: "game.out".to_owned(),
+        contents: save_legacy(&mut loaded)?,
+    });
+    Ok(TurnOutput {
+        files,
+        engine_output: output.into_string(),
+    })
+}
+
+/// C++: `game.cpp` `PreProcessTurn`.
+pub fn pre_process_turn(
+    game: &mut Game,
+    ruleset: &dyn Ruleset,
+    tables: &RulesetTables,
+    rng: &mut Rng,
+) -> Result<(), crate::model::ModelError> {
+    game.month += 1;
+    if game.month > 11 {
+        game.month = 0;
+        game.year += 1;
+    }
+    let month = game.month;
+    game.setup_unit_nums()?;
+
+    let defs = ruleset.game_defs();
+    clear_faction_default_orders(game);
+    for region_id in game.region_ids().to_vec() {
+        let region = game.region(region_id).expect("ordered region exists");
+        let weather = (defs.weather_exists != 0).then(|| weather_for_region(game, region, month));
+        let region = game.region_mut(region_id).expect("ordered region exists");
+        if let Some(weather) = weather {
+            region.weather = weather;
+        }
+        if defs.gates_not_perennial != 0 {
+            update_gate_status(region, defs, month);
+        }
+        region_default_orders(game, region_id, ruleset, tables, rng);
+    }
+    Ok(())
+}
+
+fn weather_for_region(game: &Game, region: &Region, month: i32) -> i32 {
+    if region.zloc == 0 || region.zloc > 1 {
+        return WEATHER_NORMAL;
+    }
+
+    let surface_height = game
+        .region_arrays
+        .get(1)
+        .expect("surface region array exists when weather is enabled")
+        .y;
+    let latitude = (3 * (region.yloc + 1)) / surface_height;
+    if latitude == 0 {
+        if !(2..=9).contains(&month) {
+            WEATHER_WINTER
+        } else {
+            WEATHER_NORMAL
+        }
+    } else if latitude == 1 {
+        if month == 11 || month == 0 || month == 5 || month == 6 {
+            WEATHER_MONSOON
+        } else {
+            WEATHER_NORMAL
+        }
+    } else if (4..=7).contains(&month) {
+        WEATHER_WINTER
+    } else {
+        WEATHER_NORMAL
+    }
+}
+
+fn update_gate_status(region: &mut Region, defs: &crate::defs::GameDefs, month: i32) {
+    if region.terrain_type == Some(R_NEXUS)
+        || (defs.start_gates_open != 0
+            && region
+                .town
+                .as_ref()
+                .is_some_and(|town| town.population >= defs.city_pop * 120 / 100))
+    {
+        region.gate_open = 1;
+        return;
+    }
+
+    region.gate_open = 0;
+    for offset in 0..defs.gates_not_perennial {
+        let mut gate_month = region.gate_month + offset;
+        if gate_month > 11 {
+            gate_month -= 12;
+        }
+        if gate_month == month {
+            region.gate_open = 1;
+        }
+    }
+}
+
+fn read_orders(
+    game: &mut Game,
+    ruleset: &dyn Ruleset,
+    tables: &RulesetTables,
+    order_files: &std::collections::BTreeMap<i32, Vec<u8>>,
+) -> Result<(), TurnError> {
+    for faction_id in game.faction_ids().to_vec() {
+        let faction = game.faction(faction_id).expect("ordered faction exists");
+        if is_npc(faction) {
+            continue;
+        }
+        if let Some(orders) = order_files.get(&faction.num) {
+            parse_order_file(
+                game,
+                ruleset.game_defs(),
+                tables,
+                orders,
+                OrderParseMode::Turn,
+            )?;
+        }
+        apply_default_work_orders(game, ruleset, tables);
+    }
+    Ok(())
+}
+
+/// C++: `game.cpp` `RemoveInactiveFactions`.
+fn remove_inactive_factions(game: &mut Game, ruleset: &dyn Ruleset) {
+    let max_inactive_turns = ruleset.game_defs().max_inactive_turns;
+    let turn_number = game.turn_number();
+    for faction_id in game.faction_ids().to_vec() {
+        let faction = game
+            .faction_mut(faction_id)
+            .expect("ordered faction exists");
+        if !is_npc(faction) && turn_number - faction.last_orders >= max_inactive_turns {
+            faction.quit = QUIT_BY_GM;
+        }
+    }
+}
+
+fn should_write_report(faction: &Faction, game: &Game, gm_report: bool) -> bool {
+    !is_npc(faction) || (((game.month == 0 && game.year == 1) || gm_report) && faction.num == 1)
+}
+
+fn delete_dead_factions(game: &mut Game) {
+    let dead = game
+        .faction_ids()
+        .iter()
+        .copied()
+        .filter(|faction_id| {
+            game.faction(*faction_id)
+                .is_some_and(|faction| faction.exists == 0 && !is_npc(faction))
+        })
+        .collect::<Vec<_>>();
+    for faction_id in dead {
+        game.remove_faction(faction_id);
+    }
+}
+
+/// C++: `runorders.cpp` `Game::RunOrders`; the phase list in the original's order.
+///
+/// Only `FindDeadFactions` and the no-op `ProcessMigration` are ported. Every other phase is a
+/// guard that panics when the world gives it anything to act on, so a turn can never complete
+/// with work silently skipped. The guards are deliberately coarse (any unit, any region, any
+/// non-dummy object): each phase walks every unit or region and acts on more than its order
+/// slots (default guards, invisibility flags, maintenance bookkeeping, region growth), so a
+/// finer predicate would risk passing a turn whose C++ run changes state or draws.
+fn run_orders(
+    game: &mut Game,
+    defs: &crate::defs::GameDefs,
+    output: &mut crate::output::EngineOutput,
+) {
+    use Walks::{Factions, NoLivingFaction, Objects, Regions, Units};
+
+    output.write_line("Running FIND Orders...");
+    unported(game, "RunFindOrders", Units);
+    output.write_line("Running ENTER/LEAVE Orders...");
+    unported(game, "RunEnterOrders(0)", Units);
+    output.write_line("Running PROMOTE/EVICT Orders...");
+    unported(game, "RunPromoteOrders", Units);
+    output.write_line("Running Combat...");
+    unported(game, "DoAttackOrders", Units);
+    unported(game, "DoAutoAttacks", Units);
+    output.write_line("Running STEAL/ASSASSINATE Orders...");
+    unported(game, "RunStealOrders", Units);
+    output.write_line("Running GIVE Orders...");
+    unported(game, "DoGiveOrders", Units);
+    output.write_line("Running ENTER NEW Orders...");
+    unported(game, "RunEnterOrders(1)", Units);
+    output.write_line("Running EXCHANGE Orders...");
+    unported(game, "DoExchangeOrders", Units);
+    output.write_line("Running DESTROY Orders...");
+    unported(game, "RunDestroyOrders", Units);
+    output.write_line("Running PILLAGE Orders...");
+    unported(game, "RunPillageOrders", Units);
+    output.write_line("Running TAX Orders...");
+    unported(game, "RunTaxOrders", Units);
+    output.write_line("Running GUARD 1 Orders...");
+    unported(game, "DoGuard1Orders", Units);
+    output.write_line("Running Magic Orders...");
+    unported(game, "ClearCastEffects", Units);
+    unported(game, "RunCastOrders", Units);
+    output.write_line("Running SELL Orders...");
+    unported(game, "RunSellOrders", Units);
+    output.write_line("Running BUY Orders...");
+    unported(game, "RunBuyOrders", Units);
+    output.write_line("Running FORGET Orders...");
+    unported(game, "RunForgetOrders", Units);
+    output.write_line("Mid-Turn Processing...");
+    unported(game, "MidProcessTurn", Units);
+    output.write_line("Running QUIT Orders...");
+    unported(game, "RunQuitOrders", Factions(|faction| faction.quit != 0));
+    output.write_line("Removing Empty Units...");
+    unported(game, "DeleteEmptyUnits", Units);
+    if defs.allow_withdraw != 0 {
+        output.write_line("Running WITHDRAW Orders...");
+        unported(game, "DoWithdrawOrders", Units);
+    }
+    output.write_line("Running Consolidated Movement Orders...");
+    unported(game, "RunMovementOrders", Units);
+    unported(game, "SinkUncrewedFleets", Objects);
+    unported(game, "DrownUnits", Units);
+    find_dead_factions(game);
+    output.write_line("Running Teach Orders...");
+    unported(game, "RunTeachOrders", Units);
+    output.write_line("Running Month-long Orders...");
+    unported(game, "RunMonthOrders", Units);
+    output.write_line("Running Economics...");
+    if defs.dynamic_population != 0 || defs.regions_economy != 0 {
+        unported(game, "ProcessEconomics", Regions);
+    }
+    output.write_line("Running Teleport Orders...");
+    unported(game, "RunTeleportOrders", Units);
+    if defs.transport & flags::ALLOW_TRANSPORT != 0 {
+        output.write_line("Running Transport Orders...");
+        unported(game, "CheckTransportOrders", Units);
+        unported(game, "RunTransportOrders", Units);
+    }
+    output.write_line("Assessing Maintenance costs...");
+    unported(game, "AssessMaintenance", Units);
+    if defs.dynamic_population != 0 {
+        output.write_line("Processing Migration...");
+        // C++: `ProcessMigration` begins with `return;`, so there is nothing to port.
+    }
+    output.write_line("Post-Turn Processing...");
+    // C++: `PostProcessTurn` ends the game when no faction exists, then walks every region
+    // (`PostTurn`, `AdjustCityMons`) and grows monsters across the region levels.
+    unported(game, "PostProcessTurn", NoLivingFaction);
+    unported(game, "PostProcessTurn", Regions);
+    unported(game, "DeleteEmptyUnits", Units);
+    unported(game, "RemoveEmptyObjects", Objects);
+}
+
+/// What an unported phase walks, and so what makes it act.
+enum Walks {
+    /// Every unit in every region: any unit at all.
+    Units,
+    /// Every region, or the region levels: any region or region level at all.
+    Regions,
+    /// Objects other than a region's dummy: any building or fleet.
+    Objects,
+    /// Any faction for which the predicate holds.
+    Factions(fn(&Faction) -> bool),
+    /// No faction exists any more (C++ `EndGame(0)`).
+    NoLivingFaction,
+}
+
+fn unported(game: &Game, phase: &str, walks: Walks) {
+    let units = || {
+        game.region_ids()
+            .iter()
+            .filter_map(|id| game.region(*id))
+            .flat_map(|region| region.object_ids())
+            .filter_map(|id| game.object(*id))
+            .flat_map(|object| object.unit_ids())
+            .filter_map(|id| game.unit(*id))
+    };
+    let factions = || game.faction_ids().iter().filter_map(|id| game.faction(*id));
+    let blocker = match walks {
+        Walks::Units => units().next().map(|unit| format!("unit {}", unit.num)),
+        Walks::Regions => (!game.region_ids().is_empty() || !game.region_arrays.is_empty())
+            .then(|| "a region".to_owned()),
+        Walks::Objects => game
+            .region_ids()
+            .iter()
+            .filter_map(|id| game.region(*id))
+            .flat_map(|region| region.object_ids())
+            .filter_map(|id| game.object(*id))
+            .find(|object| object.object_type != crate::defs::objects::O_DUMMY as i32)
+            .map(|object| format!("object {}", object.num)),
+        Walks::Factions(predicate) => factions()
+            .find(|faction| predicate(faction))
+            .map(|faction| format!("faction {}", faction.num)),
+        Walks::NoLivingFaction => factions()
+            .all(|faction| faction.exists == 0)
+            .then(|| "no living faction".to_owned()),
+    };
+    if let Some(blocker) = blocker {
+        panic!("unported RunOrders phase {phase} has work: {blocker}");
+    }
+}
+
+/// C++: `runorders.cpp` `Game::FindDeadFactions`; `Faction::CheckExist` for every faction.
+/// NPC factions are left alone; any other faction exists only while one of its units stands in
+/// a region (`ARegion::Present`).
+fn find_dead_factions(game: &mut Game) {
+    for faction_id in game.faction_ids().to_vec() {
+        let faction = game.faction(faction_id).expect("ordered faction exists");
+        if is_npc(faction) {
+            continue;
+        }
+        let present = game.region_ids().iter().any(|region_id| {
+            game.region(*region_id)
+                .expect("ordered region exists")
+                .object_ids()
+                .iter()
+                .filter_map(|object_id| game.object(*object_id))
+                .flat_map(|object| object.unit_ids())
+                .filter_map(|unit_id| game.unit(*unit_id))
+                .any(|unit| unit.faction == Some(faction_id))
+        });
+        game.faction_mut(faction_id)
+            .expect("ordered faction exists")
+            .exists = i8::from(present);
+    }
+}
 
 /// C++: `game.cpp` `PreProcessTurn` faction and region default-order fan-out.
 pub fn pre_process_default_orders(
@@ -21,6 +441,14 @@ pub fn pre_process_default_orders(
     tables: &RulesetTables,
     rng: &mut Rng,
 ) {
+    clear_faction_default_orders(game);
+    for region_id in game.region_ids().to_vec() {
+        region_default_orders(game, region_id, ruleset, tables, rng);
+    }
+}
+
+/// C++: `faction.cpp` `Faction::DefaultOrders`, for every faction in order.
+fn clear_faction_default_orders(game: &mut Game) {
     for faction_id in game.faction_ids().to_vec() {
         let faction = game
             .faction_mut(faction_id)
@@ -28,22 +456,29 @@ pub fn pre_process_default_orders(
         faction.activity.clear();
         faction.num_shows = 0;
     }
+}
 
-    for region_id in game.region_ids().to_vec() {
-        let region = game
-            .region(region_id)
+/// C++: `aregion.cpp` `ARegion::DefaultOrders`, calling `Unit::DefaultOrders` for each unit.
+fn region_default_orders(
+    game: &mut Game,
+    region_id: crate::model::RegionId,
+    ruleset: &dyn Ruleset,
+    tables: &RulesetTables,
+    rng: &mut Rng,
+) {
+    let region = game
+        .region(region_id)
+        .cloned()
+        .expect("ordered region exists");
+    for object_id in region.object_ids().to_vec() {
+        let object = game
+            .object(object_id)
             .cloned()
-            .expect("ordered region exists");
-        for object_id in region.object_ids().to_vec() {
-            let object = game
-                .object(object_id)
-                .cloned()
-                .expect("region object exists");
-            for unit_id in object.unit_ids().to_vec() {
-                let mut unit = game.unit(unit_id).cloned().expect("object unit exists");
-                default_unit_orders(&mut unit, &object, &region, game, ruleset, tables, rng);
-                *game.unit_mut(unit_id).expect("object unit exists") = unit;
-            }
+            .expect("region object exists");
+        for unit_id in object.unit_ids().to_vec() {
+            let mut unit = game.unit(unit_id).cloned().expect("object unit exists");
+            default_unit_orders(&mut unit, &object, &region, game, ruleset, tables, rng);
+            *game.unit_mut(unit_id).expect("object unit exists") = unit;
         }
     }
 }
@@ -618,7 +1053,7 @@ fn riding_capacity(unit: &Unit, tables: &RulesetTables) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_default_work_orders, pre_process_default_orders};
+    use super::{apply_default_work_orders, pre_process_default_orders, update_gate_status};
     use crate::defs::{
         skills::lookup_skill,
         terrains::{R_NEXUS, R_PLAIN},
@@ -1150,5 +1585,36 @@ mod tests {
             include_str!("../../../fixtures/neworigins/turn_1/preprocess.rng"),
             "preprocessing random draws differ from the C++ reference"
         );
+    }
+
+    // Neither supported ruleset sets GATES_NOT_PERENNIAL, so these pin the C++ logic directly.
+    fn gate_after(gate_month: i32, month: i32, region: &mut Region) -> i32 {
+        let mut defs = *<dyn crate::ruleset::Ruleset>::from_name("standard")
+            .expect("standard")
+            .game_defs();
+        defs.gates_not_perennial = 3;
+        defs.start_gates_open = 0;
+        region.gate_month = gate_month;
+        update_gate_status(region, &defs, month);
+        region.gate_open
+    }
+
+    #[test]
+    fn gate_status_opens_for_gates_not_perennial_months_from_its_gate_month() {
+        let mut region = Region::default();
+        assert_eq!(gate_after(5, 4, &mut region), 0);
+        assert_eq!(gate_after(5, 5, &mut region), 1);
+        assert_eq!(gate_after(5, 7, &mut region), 1);
+        assert_eq!(gate_after(5, 8, &mut region), 0);
+        // The window wraps past December.
+        assert_eq!(gate_after(11, 1, &mut region), 1);
+        assert_eq!(gate_after(11, 2, &mut region), 0);
+    }
+
+    #[test]
+    fn gate_status_keeps_the_nexus_open() {
+        let mut region = Region::default();
+        region.terrain_type = Some(R_NEXUS);
+        assert_eq!(gate_after(5, 0, &mut region), 1);
     }
 }

@@ -259,6 +259,44 @@ impl Game {
         id
     }
 
+    /// C++: `game.cpp` `Game::DeleteDeadFactions` body for one faction: `factions.Remove`, then
+    /// `Faction::RemoveAttitude` on every remaining faction, which drops only the first
+    /// attitude naming it. The arena slot is emptied so other ids stay stable.
+    pub fn remove_faction(&mut self, id: FactionId) -> Option<Faction> {
+        let faction = self.factions.get_mut(id.index())?.take()?;
+        self.faction_ids.retain(|faction_id| *faction_id != id);
+        for faction_id in self.faction_ids.clone() {
+            let attitudes = &mut self
+                .faction_mut(faction_id)
+                .expect("ordered faction exists")
+                .attitudes;
+            if let Some(position) = attitudes
+                .iter()
+                .position(|attitude| attitude.faction_num == faction.num)
+            {
+                attitudes.remove(position);
+            }
+        }
+        Some(faction)
+    }
+
+    /// C++: `runorders.cpp` `Game::EmptyHell`; `ARegion::ClearHell` frees each region's dead units.
+    pub fn empty_hell(&mut self) {
+        for region_id in self.region_ids.clone() {
+            let unit_ids = self
+                .region_mut(region_id)
+                .expect("ordered region exists")
+                .take_hell_unit_ids();
+            for unit_id in unit_ids {
+                self.units
+                    .get_mut(unit_id.index())
+                    .expect("Hell unit index exists")
+                    .take()
+                    .expect("Hell unit exists");
+            }
+        }
+    }
+
     pub fn add_region(&mut self, region: Region) -> RegionId {
         let id = RegionId::new(self.regions.len());
         self.regions.push(Some(region));

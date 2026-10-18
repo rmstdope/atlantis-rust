@@ -1,5 +1,6 @@
 //! Pure Rust core for the Atlantis game engine.
 
+pub mod api;
 pub mod defs;
 pub mod economy;
 pub mod edit;
